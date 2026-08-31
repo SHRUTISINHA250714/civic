@@ -82,14 +82,3 @@ This project consists of an AI-powered FastAPI backend and a Next.js frontend. T
 
 ---
 
-## 4. Default Accounts for Testing
-Once both the backend and frontend are running, you can log in using these default credentials populated by [seed.py](file:///c:/Users/Lenovo/Desktop/CIVIC/backend/app/seed.py):
-
-| Role | Email | Password |
-| :--- | :--- | :--- |
-| **Citizen** | `citizen@gmail.com` | `citizenpassword` |
-| **BBMP Officer** | `officer.bbmp@civicai.gov.in` | `officerpassword` |
-| **BWSSB Officer** | `officer.bwssb@civicai.gov.in` | `officerpassword` |
-| **BESCOM Officer** | `officer.bescom@civicai.gov.in` | `officerpassword` |
-| **Traffic Police Officer** | `officer.traffic@civicai.gov.in` | `officerpassword` |
-| **Admin** | `admin@civicai.gov.in` | `adminpassword` |
