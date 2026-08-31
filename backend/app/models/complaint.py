@@ -1,5 +1,5 @@
 from datetime import datetime
-from sqlalchemy import Column, Integer, String, Boolean, DateTime, Float, ForeignKey
+from sqlalchemy import Column, Integer, String, Boolean, DateTime, Float, ForeignKey, JSON, Text
 from sqlalchemy.orm import relationship
 from backend.app.core.database import Base
 
@@ -15,6 +15,20 @@ class ComplaintCategory(Base):
     
     department = relationship("Department", back_populates="categories")
     complaints = relationship("Complaint", back_populates="category")
+    sla_policies = relationship("SLAPolicy", back_populates="category")
+
+class SLAPolicy(Base):
+    """SLA resolution time policies per category & priority."""
+    __tablename__ = "sla_policies"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    category_id = Column(Integer, ForeignKey("complaint_categories.id"), nullable=False)
+    priority = Column(String, nullable=False)          # Low, Medium, High, Critical
+    resolution_hours = Column(Float, nullable=False)   # e.g. 72, 48, 24, 12
+    warning_threshold_pct = Column(Float, default=0.75)  # 75% of time elapsed → Warning
+    created_at = Column(DateTime, default=datetime.utcnow)
+    
+    category = relationship("ComplaintCategory", back_populates="sla_policies")
 
 class Complaint(Base):
     __tablename__ = "complaints"
@@ -24,15 +38,36 @@ class Complaint(Base):
     category_id = Column(Integer, ForeignKey("complaint_categories.id"), nullable=False)
     description = Column(String, nullable=False)
     original_description = Column(String, nullable=True)
-    language = Column(String, default="English")  # English, Kannada, Hinglish
+    language = Column(String, default="English")  # English, Kannada, Hinglish, Voice
     detected_language = Column(String, nullable=True)
+    
+    # Audio complaint support
+    audio_url = Column(String, nullable=True)         # URL of voice recording if submitted
+    
+    # Location
     location_latitude = Column(Float, nullable=False)
     location_longitude = Column(Float, nullable=False)
     location_address = Column(String, nullable=True)
-    status = Column(String, default="Registered")  # Registered, Accepted, In Progress, Resolved, Closed
-    priority = Column(String, default="Medium")  # Low, Medium, High, Critical
+    
+    # Status & Priority
+    status = Column(String, default="Registered")  # Registered, Accepted, In Progress, Resolved, Reopened, Closed
+    priority = Column(String, default="Medium")    # Low, Medium, High, Critical
+    
+    # Assignment
     assigned_officer_id = Column(Integer, ForeignKey("officers.id"), nullable=True)
     duplicate_of_complaint_id = Column(Integer, ForeignKey("complaints.id"), nullable=True)
+    
+    # SLA Tracking
+    sla_deadline = Column(DateTime, nullable=True)
+    sla_status = Column(String, default="Normal")  # Normal, Warning, Breached
+    is_escalated = Column(Boolean, default=False)
+    
+    # Citizen Feedback / Verification of Resolution
+    citizen_verified = Column(Boolean, nullable=True)            # None=pending, True=approved, False=rejected
+    citizen_feedback_rating = Column(Integer, nullable=True)     # 1-5 stars
+    citizen_feedback_remarks = Column(String, nullable=True)
+    reopen_count = Column(Integer, default=0)
+    
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     
@@ -44,6 +79,7 @@ class Complaint(Base):
     status_history = relationship("ComplaintStatusHistory", back_populates="complaint")
     ai_prediction = relationship("AIPrediction", back_populates="complaint", uselist=False)
     notifications = relationship("Notification", back_populates="complaint")
+    evidence_check = relationship("ComplaintEvidenceCheck", back_populates="complaint", uselist=False)
     
     # Self-referencing relationship for duplicate handling
     duplicates = relationship("Complaint", backref="original_complaint", remote_side=[id])
@@ -84,10 +120,40 @@ class AIPrediction(Base):
     predicted_priority = Column(String, nullable=False)
     priority_confidence = Column(Float, default=0.0)
     translation_time = Column(Float, default=0.0)  # in seconds
+    transcription_used = Column(Boolean, default=False)  # True if voice input was used
     created_at = Column(DateTime, default=datetime.utcnow)
     
     complaint = relationship("Complaint", back_populates="ai_prediction")
     predicted_category = relationship("ComplaintCategory")
+
+class ComplaintEvidenceCheck(Base):
+    """Multimodal Evidence Trust Score for each complaint."""
+    __tablename__ = "complaint_evidence_checks"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    complaint_id = Column(Integer, ForeignKey("complaints.id"), unique=True, nullable=False)
+    
+    # GPS / EXIF Validation
+    live_gps_provided = Column(Boolean, default=False)
+    exif_gps_found = Column(Boolean, default=False)
+    gps_distance_m = Column(Float, nullable=True)    # Distance between live GPS and EXIF GPS
+    gps_match = Column(Boolean, default=True)        # True if within threshold (< 500m)
+    
+    # Image vs Text Agreement
+    vision_objects_detected = Column(String, nullable=True)  # JSON list of YOLO labels
+    vision_agreement_score = Column(Float, default=0.5)      # 0.0 - 1.0
+    
+    # Timestamp Consistency
+    timestamp_valid = Column(Boolean, default=True)
+    
+    # Composite Score
+    trust_score = Column(Float, default=50.0)   # 0-100
+    trust_level = Column(String, default="Medium")  # High, Medium, Low, Suspicious
+    verification_details = Column(Text, nullable=True)  # Human-readable explanation
+    
+    created_at = Column(DateTime, default=datetime.utcnow)
+    
+    complaint = relationship("Complaint", back_populates="evidence_check")
 
 class DuplicateComplaintMapping(Base):
     __tablename__ = "duplicate_complaint_mappings"
@@ -105,6 +171,7 @@ class Notification(Base):
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
     complaint_id = Column(Integer, ForeignKey("complaints.id"), nullable=True)
     message = Column(String, nullable=False)
+    notification_type = Column(String, default="General")  # General, SLA_Warning, SLA_Breach, Resolution, Reopen
     is_read = Column(Boolean, default=False)
     created_at = Column(DateTime, default=datetime.utcnow)
     

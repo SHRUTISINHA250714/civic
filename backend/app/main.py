@@ -9,7 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
 from backend.app.core.config import settings
-from backend.app.routers import auth, complaints, dashboard, officers, notifications
+from backend.app.routers import auth, complaints, dashboard, officers, notifications, predictive
 
 # Initialize FastAPI App
 app = FastAPI(
@@ -43,6 +43,7 @@ app.include_router(complaints.router, prefix=settings.API_V1_STR)
 app.include_router(dashboard.router, prefix=settings.API_V1_STR)
 app.include_router(officers.router, prefix=settings.API_V1_STR)
 app.include_router(notifications.router, prefix=settings.API_V1_STR)
+app.include_router(predictive.router, prefix=settings.API_V1_STR)
 
 @app.get("/")
 def read_root():

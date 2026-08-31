@@ -30,20 +30,48 @@ class AIPredictionResponse(BaseModel):
     predicted_priority: str
     priority_confidence: float
     translation_time: float
+    transcription_used: bool = False
     created_at: datetime
     
     class Config:
         from_attributes = True
 
+class EvidenceCheckResponse(BaseModel):
+    """Multimodal Evidence Trust Score summary."""
+    trust_score: float
+    trust_level: str                # High, Medium, Low, Suspicious
+    live_gps_provided: bool
+    exif_gps_found: bool
+    gps_distance_m: Optional[float] = None
+    gps_match: bool
+    vision_agreement_score: float
+    vision_objects_detected: str    # JSON list string
+    timestamp_valid: bool
+    verification_details: Optional[str] = None
+    
+    class Config:
+        from_attributes = True
+
+class SLASummaryResponse(BaseModel):
+    """SLA tracking summary."""
+    sla_deadline: Optional[str] = None
+    sla_status: str                 # Normal, Warning, Breached
+    is_escalated: bool
+    pct_elapsed: float              # 0-100
+    hours_remaining: Optional[float] = None
+
+class CitizenVerifyResolutionRequest(BaseModel):
+    """Citizen approves or rejects resolution."""
+    approve: bool               # True = approve & close | False = reject & reopen
+    feedback_rating: Optional[int] = None   # 1–5 stars
+    feedback_remarks: Optional[str] = None
+
 class ComplaintCreate(BaseModel):
     description: str
-    language: str = "English"  # English, Kannada, Hinglish
+    language: str = "English"  # English, Kannada, Hinglish, Voice
     location_latitude: float
     location_longitude: float
     location_address: Optional[str] = None
-    
-    # We will upload images separately or via multipart request,
-    # but storing image link after upload is also possible.
 
 class ComplaintResponse(BaseModel):
     id: int
@@ -57,6 +85,7 @@ class ComplaintResponse(BaseModel):
     original_description: Optional[str] = None
     language: str
     detected_language: Optional[str] = None
+    audio_url: Optional[str] = None
     location_latitude: float
     location_longitude: float
     location_address: Optional[str] = None
@@ -65,12 +94,26 @@ class ComplaintResponse(BaseModel):
     assigned_officer_id: Optional[int] = None
     assigned_officer_name: Optional[str] = None
     duplicate_of_complaint_id: Optional[int] = None
+    
+    # SLA
+    sla_deadline: Optional[str] = None
+    sla_status: Optional[str] = "Normal"
+    is_escalated: bool = False
+    
+    # Citizen verification
+    citizen_verified: Optional[bool] = None
+    citizen_feedback_rating: Optional[int] = None
+    citizen_feedback_remarks: Optional[str] = None
+    reopen_count: int = 0
+    
     created_at: datetime
     updated_at: datetime
     
     images: List[ComplaintImageResponse] = []
     status_history: List[ComplaintStatusHistoryResponse] = []
     ai_prediction: Optional[AIPredictionResponse] = None
+    evidence_check: Optional[EvidenceCheckResponse] = None
+    sla_summary: Optional[SLASummaryResponse] = None
     
     class Config:
         from_attributes = True
@@ -82,7 +125,7 @@ class DuplicateWarningResponse(BaseModel):
     message: str
 
 class ComplaintStatusUpdate(BaseModel):
-    status: str  # Accepted, In Progress, Resolved, Closed
+    status: str  # Accepted, In Progress, Resolved, Closed, Reopened
     remarks: Optional[str] = None
 
 class NotificationResponse(BaseModel):
@@ -90,6 +133,7 @@ class NotificationResponse(BaseModel):
     message: str
     is_read: bool
     complaint_id: Optional[int] = None
+    notification_type: str = "General"
     created_at: datetime
     
     class Config:

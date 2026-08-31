@@ -79,11 +79,13 @@ export default function OfficerDashboard() {
     if (tab === 'all') {
       setFilteredComplaints(data);
     } else if (tab === 'pending') {
-      setFilteredComplaints(data.filter(c => c.status === 'Registered'));
+      setFilteredComplaints(data.filter((c: any) => c.status === 'Registered'));
     } else if (tab === 'in_progress') {
-      setFilteredComplaints(data.filter(c => c.status === 'Accepted' || c.status === 'In Progress'));
+      setFilteredComplaints(data.filter((c: any) => c.status === 'Accepted' || c.status === 'In Progress'));
+    } else if (tab === 'reopened') {
+      setFilteredComplaints(data.filter((c: any) => c.status === 'Reopened'));
     } else if (tab === 'completed') {
-      setFilteredComplaints(data.filter(c => c.status === 'Resolved' || c.status === 'Closed'));
+      setFilteredComplaints(data.filter((c: any) => c.status === 'Resolved' || c.status === 'Closed'));
     }
   };
 
@@ -174,30 +176,38 @@ export default function OfficerDashboard() {
       </header>
 
       {/* Metrics Row */}
-      <section className="grid grid-cols-2 md:grid-cols-6 gap-4 p-4 md:p-6 max-w-7xl mx-auto w-full">
-        <div className="bg-white dark:bg-slate-900 p-4 border border-slate-200 dark:border-slate-800 rounded-xl shadow-sm">
-          <span className="text-xs text-slate-500 font-semibold block uppercase">Assigned Total</span>
-          <span className="text-2xl font-bold text-slate-900 dark:text-white mt-1 block">{stats.total_assigned}</span>
+      <section className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-8 gap-3 p-4 md:p-6 max-w-7xl mx-auto w-full">
+        <div className="bg-white dark:bg-slate-900 p-3 border border-slate-200 dark:border-slate-800 rounded-xl shadow-sm">
+          <span className="text-[10px] text-slate-500 font-semibold block uppercase">Total</span>
+          <span className="text-xl font-bold text-slate-900 dark:text-white mt-1 block">{stats.total_assigned}</span>
         </div>
-        <div className="bg-white dark:bg-slate-900 p-4 border border-slate-200 dark:border-slate-800 rounded-xl shadow-sm">
-          <span className="text-xs text-slate-500 font-semibold block uppercase">Pending (New)</span>
-          <span className="text-2xl font-bold text-blue-600 mt-1 block">{stats.pending}</span>
+        <div className="bg-white dark:bg-slate-900 p-3 border border-slate-200 dark:border-slate-800 rounded-xl shadow-sm">
+          <span className="text-[10px] text-slate-500 font-semibold block uppercase">Pending</span>
+          <span className="text-xl font-bold text-blue-600 mt-1 block">{stats.pending}</span>
         </div>
-        <div className="bg-white dark:bg-slate-900 p-4 border border-slate-200 dark:border-slate-800 rounded-xl shadow-sm">
-          <span className="text-xs text-slate-500 font-semibold block uppercase">Accepted Tasks</span>
-          <span className="text-2xl font-bold text-orange-500 mt-1 block">{stats.accepted}</span>
+        <div className="bg-white dark:bg-slate-900 p-3 border border-slate-200 dark:border-slate-800 rounded-xl shadow-sm">
+          <span className="text-[10px] text-slate-500 font-semibold block uppercase">Accepted</span>
+          <span className="text-xl font-bold text-orange-500 mt-1 block">{stats.accepted}</span>
         </div>
-        <div className="bg-white dark:bg-slate-900 p-4 border border-slate-200 dark:border-slate-800 rounded-xl shadow-sm">
-          <span className="text-xs text-slate-500 font-semibold block uppercase">In Progress</span>
-          <span className="text-2xl font-bold text-purple-600 mt-1 block">{stats.in_progress}</span>
+        <div className="bg-white dark:bg-slate-900 p-3 border border-slate-200 dark:border-slate-800 rounded-xl shadow-sm">
+          <span className="text-[10px] text-slate-500 font-semibold block uppercase">In Progress</span>
+          <span className="text-xl font-bold text-purple-600 mt-1 block">{stats.in_progress}</span>
         </div>
-        <div className="bg-white dark:bg-slate-900 p-4 border border-slate-200 dark:border-slate-800 rounded-xl shadow-sm">
-          <span className="text-xs text-slate-500 font-semibold block uppercase">Resolved Proofs</span>
-          <span className="text-2xl font-bold text-emerald-600 mt-1 block">{stats.resolved}</span>
+        <div className="bg-white dark:bg-slate-900 p-3 border border-slate-200 dark:border-slate-800 rounded-xl shadow-sm">
+          <span className="text-[10px] text-slate-500 font-semibold block uppercase">Resolved</span>
+          <span className="text-xl font-bold text-emerald-600 mt-1 block">{stats.resolved}</span>
         </div>
-        <div className="bg-white dark:bg-slate-900 p-4 border border-slate-200 dark:border-slate-800 rounded-xl shadow-sm">
-          <span className="text-xs text-slate-500 font-semibold block uppercase">Citizen Closed</span>
-          <span className="text-2xl font-bold text-slate-500 mt-1 block">{stats.closed}</span>
+        <div className="bg-white dark:bg-slate-900 p-3 border border-slate-200 dark:border-slate-800 rounded-xl shadow-sm">
+          <span className="text-[10px] text-slate-500 font-semibold block uppercase">Closed</span>
+          <span className="text-xl font-bold text-slate-500 mt-1 block">{stats.closed}</span>
+        </div>
+        <div className="bg-amber-50 dark:bg-amber-950/20 p-3 border border-amber-200 dark:border-amber-800 rounded-xl shadow-sm">
+          <span className="text-[10px] text-amber-600 font-semibold block uppercase">SLA Warning</span>
+          <span className="text-xl font-bold text-amber-600 mt-1 block">{stats.sla_warning || 0}</span>
+        </div>
+        <div className="bg-red-50 dark:bg-red-950/20 p-3 border border-red-200 dark:border-red-800 rounded-xl shadow-sm">
+          <span className="text-[10px] text-red-600 font-semibold block uppercase">SLA Breached</span>
+          <span className="text-xl font-bold text-red-600 mt-1 block">{stats.sla_breached || 0}</span>
         </div>
       </section>
 
@@ -211,30 +221,17 @@ export default function OfficerDashboard() {
 
           {/* Filtering tabs */}
           <div className="flex space-x-1 bg-slate-200 dark:bg-slate-800/80 p-1 rounded-xl text-xs font-bold text-slate-600 dark:text-slate-400">
-            <button 
-              onClick={() => handleTabChange('all')}
-              className={`flex-1 py-2 text-center rounded-lg transition-all cursor-pointer ${activeTab === 'all' ? 'bg-white dark:bg-slate-900 text-blue-600 dark:text-white shadow-sm' : ''}`}
-            >
-              All
-            </button>
-            <button 
-              onClick={() => handleTabChange('pending')}
-              className={`flex-1 py-2 text-center rounded-lg transition-all cursor-pointer ${activeTab === 'pending' ? 'bg-white dark:bg-slate-900 text-blue-600 dark:text-white shadow-sm' : ''}`}
-            >
-              Pending
-            </button>
-            <button 
-              onClick={() => handleTabChange('in_progress')}
-              className={`flex-1 py-2 text-center rounded-lg transition-all cursor-pointer ${activeTab === 'in_progress' ? 'bg-white dark:bg-slate-900 text-blue-600 dark:text-white shadow-sm' : ''}`}
-            >
-              Active
-            </button>
-            <button 
-              onClick={() => handleTabChange('completed')}
-              className={`flex-1 py-2 text-center rounded-lg transition-all cursor-pointer ${activeTab === 'completed' ? 'bg-white dark:bg-slate-900 text-blue-600 dark:text-white shadow-sm' : ''}`}
-            >
-              Closed
-            </button>
+            {(['all','pending','in_progress','reopened','completed'] as const).map(tab => (
+              <button
+                key={tab}
+                onClick={() => handleTabChange(tab as any)}
+                className={`flex-1 py-1.5 text-center rounded-lg transition-all cursor-pointer capitalize ${
+                  activeTab === tab ? 'bg-white dark:bg-slate-900 text-blue-600 dark:text-white shadow-sm' : ''
+                } ${tab === 'reopened' && (stats.reopened || 0) > 0 ? 'text-rose-600' : ''}`}
+              >
+                {tab === 'in_progress' ? 'Active' : tab === 'reopened' ? `🔁 Reopened${(stats.reopened||0)>0?' ('+stats.reopened+')':''}` : tab.charAt(0).toUpperCase()+tab.slice(1)}
+              </button>
+            ))}
           </div>
 
           <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl flex-1 max-h-[550px] overflow-y-auto p-4 space-y-3 shadow-sm">
@@ -244,27 +241,39 @@ export default function OfficerDashboard() {
                 <p className="text-xs font-semibold">No assigned complaints matching filter.</p>
               </div>
             ) : (
-              filteredComplaints.map((c) => (
+              filteredComplaints.map((c: any) => (
                 <div 
                   key={c.id}
                   onClick={() => setSelectedComplaint(c)}
                   className={`p-3 rounded-lg border text-left cursor-pointer transition-all ${
                     selectedComplaint?.id === c.id 
                       ? 'border-blue-500 bg-blue-50/20 dark:bg-blue-900/10' 
-                      : 'border-slate-100 dark:border-slate-800 hover:border-slate-300 dark:hover:border-slate-700'
+                      : c.status === 'Reopened'
+                        ? 'border-rose-200 dark:border-rose-800 bg-rose-50/30 dark:bg-rose-950/10 hover:border-rose-400'
+                        : 'border-slate-100 dark:border-slate-800 hover:border-slate-300 dark:hover:border-slate-700'
                   }`}
                 >
                   <div className="flex items-center justify-between mb-1.5">
                     <span className="text-[10px] font-bold text-slate-400">ID: #{c.id}</span>
-                    <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold uppercase ${
-                      c.status === 'Resolved' ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950/30 dark:text-emerald-300' :
-                      c.status === 'Closed' ? 'bg-slate-100 text-slate-800 dark:bg-slate-800 dark:text-slate-300' :
-                      c.status === 'In Progress' ? 'bg-purple-100 text-purple-800 dark:bg-purple-950/30 dark:text-purple-300' :
-                      c.status === 'Accepted' ? 'bg-orange-100 text-orange-850 dark:bg-orange-950/30 dark:text-orange-300' :
-                      'bg-blue-100 text-blue-800 dark:bg-blue-950/30 dark:text-blue-300'
-                    }`}>
-                      {c.status}
-                    </span>
+                    <div className="flex items-center gap-1">
+                      {/* SLA urgency badge */}
+                      {c.sla_status === 'Breached' && (
+                        <span className="text-[9px] px-1.5 py-0.5 rounded-full font-bold bg-red-100 text-red-700 dark:bg-red-950/40 dark:text-red-400">🚨 SLA</span>
+                      )}
+                      {c.sla_status === 'Warning' && (
+                        <span className="text-[9px] px-1.5 py-0.5 rounded-full font-bold bg-amber-100 text-amber-700 dark:bg-amber-950/40 dark:text-amber-400">⚠️ SLA</span>
+                      )}
+                      <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold uppercase ${
+                        c.status === 'Resolved' ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950/30 dark:text-emerald-300' :
+                        c.status === 'Closed' ? 'bg-slate-100 text-slate-800 dark:bg-slate-800 dark:text-slate-300' :
+                        c.status === 'In Progress' ? 'bg-purple-100 text-purple-800 dark:bg-purple-950/30 dark:text-purple-300' :
+                        c.status === 'Accepted' ? 'bg-orange-100 text-orange-800 dark:bg-orange-950/30 dark:text-orange-300' :
+                        c.status === 'Reopened' ? 'bg-rose-100 text-rose-800 dark:bg-rose-950/30 dark:text-rose-300' :
+                        'bg-blue-100 text-blue-800 dark:bg-blue-950/30 dark:text-blue-300'
+                      }`}>
+                        {c.status}
+                      </span>
+                    </div>
                   </div>
                   <div className="flex items-center justify-between mt-1">
                     <h4 className="font-bold text-sm text-slate-900 dark:text-white">{c.category_name}</h4>
@@ -276,11 +285,15 @@ export default function OfficerDashboard() {
                   </div>
                   <p className="text-xs text-slate-500 dark:text-slate-400 line-clamp-2 mt-1">{c.description}</p>
                   
-                  <div className="flex items-center justify-between mt-3 text-[10px] text-slate-400 font-semibold border-t border-slate-100 dark:border-slate-800/50 pt-2">
-                    <span className="flex items-center space-x-1">
-                      <User className="h-3 w-3" />
-                      <span>{c.citizen_name}</span>
-                    </span>
+                  {/* Reopen feedback indicator */}
+                  {c.status === 'Reopened' && c.citizen_feedback_remarks && (
+                    <div className="mt-1.5 bg-rose-50 dark:bg-rose-950/20 rounded px-2 py-1 text-[10px] text-rose-700 dark:text-rose-400 font-semibold">
+                      🔁 Citizen: "{c.citizen_feedback_remarks}"
+                    </div>
+                  )}
+                  
+                  <div className="flex items-center justify-between mt-2 text-[10px] text-slate-400 font-semibold border-t border-slate-100 dark:border-slate-800/50 pt-1.5">
+                    <span>{c.citizen_name}</span>
                     <span>{new Date(c.created_at).toLocaleDateString()}</span>
                   </div>
                 </div>
@@ -398,13 +411,13 @@ export default function OfficerDashboard() {
                       <span>Start Action Work</span>
                     </button>
                   )}
-                  {selectedComplaint.status === "In Progress" && (
+                  {(selectedComplaint.status === "In Progress" || selectedComplaint.status === "Reopened") && (
                     <button 
                       onClick={() => setIsResolveModalOpen(true)}
                       className="bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg px-4 py-2 text-xs font-bold shadow transition cursor-pointer flex items-center space-x-1"
                     >
                       <CheckCircle2 className="h-4 w-4" />
-                      <span>Mark as Resolved</span>
+                      <span>{selectedComplaint.status === 'Reopened' ? 'Re-Submit Resolution' : 'Mark as Resolved'}</span>
                     </button>
                   )}
                 </div>

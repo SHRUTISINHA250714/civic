@@ -41,6 +41,16 @@ CATEGORIES = [
     "Tree Fall",
     "Road Damage",
     "Illegal Dumping",
+    "Power Outage",
+    "Fallen Electric Wire",
+    "Traffic Signal Fault",
+    "Road Encroachment",
+    "Metro Station Issue",
+    "Metro Track Damage",
+    "Metro Safety Concern",
+    "Illegal Construction",
+    "Park Maintenance",
+    "Layout Encroachment",
     "Others"
 ]
 
@@ -54,7 +64,17 @@ CATEGORY_PROTOTYPES = {
     "Tree Fall": "tree fallen down blocked road branch broken uprooted tree storm wind damage blocking path",
     "Road Damage": "road damage broken sidewalk pavement cutting asphalt cracked footpath encroachment curb broken",
     "Illegal Dumping": "illegal dumping debris construction waste concrete bricks empty site trash disposal unauthorized dump",
-    "Others": "general complaint animal rescue stray dog noise pollution illegal banners advertisement hoarding park maintenance"
+    "Power Outage": "power cut electricity outage no power blackout power failure load shedding transformer burnt",
+    "Fallen Electric Wire": "fallen electric wire live wire hanging dangling sparking wire on road danger electric shock",
+    "Traffic Signal Fault": "traffic signal not working broken traffic light malfunction junction signal out pedestrian crossing",
+    "Road Encroachment": "road encroachment footpath occupied vendors blocking pedestrian path illegal parking obstruction",
+    "Metro Station Issue": "metro station problem BMRCL issue elevator not working metro station cleanliness security issue",
+    "Metro Track Damage": "metro rail track damage metro infrastructure broken metro route issue track maintenance",
+    "Metro Safety Concern": "metro safety concern danger at metro station accident metro platform edge unsafe",
+    "Illegal Construction": "illegal construction unauthorized building violation BDA encroachment unlawful structure",
+    "Park Maintenance": "park maintenance garden neglected public garden dirty broken bench park lights not working BDA",
+    "Layout Encroachment": "layout encroachment BDA plot illegal occupation residential area boundary violation",
+    "Others": "general complaint animal rescue stray dog noise pollution illegal banners advertisement hoarding"
 }
 
 # Local translation lookup dict for offline fallback
@@ -165,6 +185,20 @@ def predict_priority(text: str, category_name: str) -> Tuple[str, float]:
         "Tree Fall": "Medium",
         "Road Damage": "Low",
         "Illegal Dumping": "Medium",
+        # BESCOM additions
+        "Power Outage": "High",
+        "Fallen Electric Wire": "Critical",
+        # Traffic Police additions
+        "Traffic Signal Fault": "High",
+        "Road Encroachment": "Medium",
+        # BMRCL additions
+        "Metro Station Issue": "Medium",
+        "Metro Track Damage": "High",
+        "Metro Safety Concern": "Critical",
+        # BDA additions
+        "Illegal Construction": "High",
+        "Park Maintenance": "Low",
+        "Layout Encroachment": "Medium",
         "Others": "Low"
     }
     
@@ -247,3 +281,47 @@ def verify_image(image_path: str, category_name: str) -> Tuple[bool, float]:
         print("YOLO image verification failed:", e)
         # Fallback
         return True, 0.50
+
+def get_detected_objects(image_path: str) -> list:
+    """
+    Returns list of YOLO-detected class name strings for a given image.
+    Used to feed into the Evidence Trust Engine.
+    """
+    if not yolo_model or not os.path.exists(image_path):
+        return []
+    try:
+        results = yolo_model(image_path, verbose=False)
+        detected = []
+        for r in results:
+            for c in r.boxes.cls:
+                detected.append(yolo_model.names[int(c)])
+        return detected
+    except Exception as e:
+        print("YOLO detection failed:", e)
+        return []
+
+def transcribe_audio(audio_path: str) -> Tuple[str, str]:
+    """
+    Attempts to transcribe an audio file to text.
+    Tries SpeechRecognition library first; falls back to a placeholder message.
+    Returns (transcribed_text, source) where source is 'speech_recognition' or 'fallback'.
+    """
+    if not os.path.exists(audio_path):
+        return "", "fallback"
+    
+    try:
+        import speech_recognition as sr
+        recognizer = sr.Recognizer()
+        with sr.AudioFile(audio_path) as source:
+            audio_data = recognizer.record(source)
+        # Try Google Speech Recognition (free tier, requires internet)
+        text = recognizer.recognize_google(audio_data, language="kn-IN,en-IN")
+        print(f"Audio transcribed (Google STT): {text[:80]}...")
+        return text, "speech_recognition"
+    except ImportError:
+        print("SpeechRecognition library not installed. Using audio upload stub.")
+    except Exception as e:
+        print(f"STT transcription failed: {e}")
+    
+    # Fallback: indicate that voice was uploaded but transcription unavailable
+    return "[Voice complaint uploaded — transcription unavailable. Officer will review audio.]", "fallback"

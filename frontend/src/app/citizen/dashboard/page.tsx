@@ -1,63 +1,141 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import dynamic from 'next/dynamic';
-import { 
-  ShieldAlert, LogOut, Plus, MapPin, 
-  Image as ImageIcon, Loader2, Info, CheckCircle2, 
-  Clock, AlertTriangle, MessageSquare, Globe, Navigation, ArrowRight
+import {
+  ShieldAlert, LogOut, Plus, MapPin,
+  Image as ImageIcon, Loader2, Info, CheckCircle2,
+  Clock, AlertTriangle, MessageSquare, Globe, Navigation,
+  ArrowRight, Mic, MicOff, Star, ThumbsUp, ThumbsDown,
+  Shield, TriangleAlert, RefreshCw, Volume2
 } from 'lucide-react';
 import { api, tokenStorage } from '@/lib/api';
 import { toast } from 'sonner';
 
-// Dynamically import Leaflet Map Component to bypass SSR reference errors
 const MapComponent = dynamic(() => import('@/components/MapComponent'), {
   ssr: false,
   loading: () => (
     <div className="w-full h-full bg-slate-100 dark:bg-slate-800 animate-pulse flex items-center justify-center text-slate-400 font-semibold rounded-xl">
-      Loading Leaflet Map Engine...
+      Loading Map Engine...
     </div>
   )
 });
 
+// ── Helper: SLA progress bar ────────────────────────────────────────────────
+function SLABar({ slaSummary }: { slaSummary: any }) {
+  if (!slaSummary) return null;
+  const pct = Math.min(slaSummary.pct_elapsed, 100);
+  const color =
+    slaSummary.sla_status === 'Breached' ? 'bg-red-500' :
+    slaSummary.sla_status === 'Warning'  ? 'bg-amber-500' :
+    'bg-emerald-500';
+  const label =
+    slaSummary.sla_status === 'Breached' ? '🚨 SLA Breached' :
+    slaSummary.sla_status === 'Warning'  ? '⚠️ SLA Warning' : '✅ On Track';
+  return (
+    <div className="mt-2">
+      <div className="flex items-center justify-between text-[10px] font-bold text-slate-500 mb-1">
+        <span>{label}</span>
+        <span>{pct.toFixed(0)}% elapsed</span>
+      </div>
+      <div className="w-full bg-slate-100 dark:bg-slate-800 rounded-full h-1.5">
+        <div className={`h-1.5 rounded-full transition-all ${color}`} style={{ width: `${pct}%` }} />
+      </div>
+    </div>
+  );
+}
+
+// ── Helper: Evidence Trust badge ────────────────────────────────────────────
+function TrustBadge({ level, score }: { level: string; score: number }) {
+  const cfg: Record<string, { cls: string; icon: string }> = {
+    High:       { cls: 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-300', icon: '✅' },
+    Medium:     { cls: 'bg-blue-100 text-blue-800 dark:bg-blue-950/40 dark:text-blue-300',             icon: '🔵' },
+    Low:        { cls: 'bg-amber-100 text-amber-800 dark:bg-amber-950/40 dark:text-amber-300',         icon: '⚠️' },
+    Suspicious: { cls: 'bg-red-100 text-red-800 dark:bg-red-950/40 dark:text-red-300',                icon: '🚩' },
+  };
+  const { cls, icon } = cfg[level] || cfg.Medium;
+  return (
+    <span className={`inline-flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-full font-bold ${cls}`}>
+      {icon} Trust: {level} ({score}%)
+    </span>
+  );
+}
+
+// ── Star rating picker ──────────────────────────────────────────────────────
+function StarPicker({ value, onChange }: { value: number; onChange: (v: number) => void }) {
+  return (
+    <div className="flex space-x-1">
+      {[1, 2, 3, 4, 5].map(n => (
+        <button key={n} onClick={() => onChange(n)} type="button">
+          <Star className={`h-5 w-5 ${n <= value ? 'text-amber-400 fill-amber-400' : 'text-slate-300'}`} />
+        </button>
+      ))}
+    </div>
+  );
+}
+
+// ── Status colour mapping ───────────────────────────────────────────────────
+function statusClass(status: string) {
+  const m: Record<string, string> = {
+    'Resolved':   'bg-emerald-100 text-emerald-800 dark:bg-emerald-950/30 dark:text-emerald-300',
+    'Closed':     'bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300',
+    'In Progress':'bg-purple-100 text-purple-800 dark:bg-purple-950/30 dark:text-purple-300',
+    'Reopened':   'bg-rose-100 text-rose-800 dark:bg-rose-950/30 dark:text-rose-300',
+    'Registered': 'bg-blue-100 text-blue-800 dark:bg-blue-950/30 dark:text-blue-300',
+    'Accepted':   'bg-cyan-100 text-cyan-800 dark:bg-cyan-950/30 dark:text-cyan-300',
+  };
+  return m[status] || 'bg-blue-100 text-blue-800';
+}
+
 export default function CitizenDashboard() {
   const router = useRouter();
   const [user, setUser] = useState<any>(null);
-  
-  // Dashboard states
+
   const [stats, setStats] = useState<any>({
-    total_complaints: 0,
-    active_complaints: 0,
-    resolved_complaints: 0,
-    closed_complaints: 0,
-    pending_complaints: 0
+    total_complaints: 0, active_complaints: 0,
+    resolved_complaints: 0, closed_complaints: 0,
+    pending_complaints: 0, reopened_complaints: 0,
   });
   const [complaints, setComplaints] = useState<any[]>([]);
   const [nearbyComplaints, setNearbyComplaints] = useState<any[]>([]);
   const [selectedComplaint, setSelectedComplaint] = useState<any>(null);
-  
-  // Form states
+
+  // Form
   const [isFormOpen, setIsFormOpen] = useState(false);
   const [description, setDescription] = useState('');
   const [language, setLanguage] = useState('English');
-  const [latitude, setLatitude] = useState(12.971598); // Bangalore default
+  const [latitude, setLatitude] = useState(12.971598);
   const [longitude, setLongitude] = useState(77.594562);
   const [address, setAddress] = useState('');
   const [imageFile, setImageFile] = useState<File | null>(null);
-  
-  // AI Sandbox & Duplicate check states
+  const [audioFile, setAudioFile] = useState<File | null>(null);
+
+  // Voice recording
+  const [isRecording, setIsRecording] = useState(false);
+  const [recordingSeconds, setRecordingSeconds] = useState(0);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const audioChunksRef = useRef<Blob[]>([]);
+  const timerRef = useRef<any>(null);
+
+  // Duplicate
   const [isDuplicateChecking, setIsDuplicateChecking] = useState(false);
   const [duplicateWarning, setDuplicateWarning] = useState<any>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
-  // Load user session
+  // Citizen verification modal
+  const [isVerifyModalOpen, setIsVerifyModalOpen] = useState(false);
+  const [verifyComplaint, setVerifyComplaint] = useState<any>(null);
+  const [feedbackRating, setFeedbackRating] = useState(5);
+  const [feedbackRemarks, setFeedbackRemarks] = useState('');
+  const [isVerifying, setIsVerifying] = useState(false);
+
   useEffect(() => {
     const userInfo = tokenStorage.getUserInfo();
-    if (!userInfo || userInfo.role !== "Citizen") {
-      toast.error("Unauthorized access. Redirecting...");
-      router.push("/login");
+    if (!userInfo || userInfo.role !== 'Citizen') {
+      toast.error('Unauthorized access. Redirecting...');
+      router.push('/login');
     } else {
       setUser(userInfo);
       loadDashboardData();
@@ -66,138 +144,151 @@ export default function CitizenDashboard() {
 
   const loadDashboardData = async () => {
     try {
-      const statsData = await api.getDashboardStats("citizen");
+      const [statsData, complaintsData, nearby] = await Promise.all([
+        api.getDashboardStats('citizen'),
+        api.getComplaints(),
+        api.getNearbyComplaints(12.971598, 77.594562, 5000),
+      ]);
       setStats(statsData);
-      
-      const complaintsData = await api.getComplaints();
       setComplaints(complaintsData);
-
-      // Load nearby active complaints to display on map
-      const nearby = await api.getNearbyComplaints(latitude, longitude, 5000); // 5km
       setNearbyComplaints(nearby);
-    } catch (err: any) {
-      console.error(err);
-    }
+    } catch (err) { console.error(err); }
   };
 
   const handleLogout = () => {
     tokenStorage.clearToken();
-    toast.success("Logged out successfully");
-    router.push("/login");
+    toast.success('Logged out successfully');
+    router.push('/login');
   };
 
-  // Auto-detect location
   const handleAutoLocate = () => {
-    if (!navigator.geolocation) {
-      toast.error("Geolocation is not supported by your browser");
-      return;
-    }
-    toast.loading("Detecting your GPS location...");
+    if (!navigator.geolocation) { toast.error('Geolocation not supported'); return; }
+    const id = toast.loading('Detecting GPS location...');
     navigator.geolocation.getCurrentPosition(
       (pos) => {
         setLatitude(pos.coords.latitude);
         setLongitude(pos.coords.longitude);
-        setAddress(`GPS Located: (${pos.coords.latitude.toFixed(5)}, ${pos.coords.longitude.toFixed(5)})`);
-        toast.dismiss();
-        toast.success("Location locked successfully!");
+        setAddress(`GPS: (${pos.coords.latitude.toFixed(5)}, ${pos.coords.longitude.toFixed(5)})`);
+        toast.dismiss(id);
+        toast.success('Location locked!');
       },
-      (err) => {
-        toast.dismiss();
-        toast.error("Failed to detect location. Please pin manually on map.");
-      }
+      () => { toast.dismiss(id); toast.error('GPS failed. Pin location on map.'); }
     );
   };
 
-  // Trigger duplicate check on coordinates/description change
+  // ── Voice recording helpers ─────────────────────────────────────────────
+  const startRecording = async () => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const mr = new MediaRecorder(stream);
+      audioChunksRef.current = [];
+      mr.ondataavailable = (e) => { if (e.data.size > 0) audioChunksRef.current.push(e.data); };
+      mr.onstop = () => {
+        const blob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
+        const f = new File([blob], `voice_${Date.now()}.webm`, { type: 'audio/webm' });
+        setAudioFile(f);
+        stream.getTracks().forEach(t => t.stop());
+        toast.success('Voice note recorded!');
+      };
+      mr.start();
+      mediaRecorderRef.current = mr;
+      setIsRecording(true);
+      setRecordingSeconds(0);
+      timerRef.current = setInterval(() => setRecordingSeconds(s => s + 1), 1000);
+    } catch { toast.error('Microphone access denied.'); }
+  };
+
+  const stopRecording = () => {
+    mediaRecorderRef.current?.stop();
+    clearInterval(timerRef.current);
+    setIsRecording(false);
+  };
+
   const runDuplicateCheck = async () => {
     if (!description || description.length < 10) return;
     setIsDuplicateChecking(true);
     try {
-      const formData = new FormData();
-      formData.append("latitude", latitude.toString());
-      formData.append("longitude", longitude.toString());
-      formData.append("description", description);
-      formData.append("category_name", "Others"); // placeholder, backend maps category
-
-      const res = await api.checkDuplicate(formData);
-      if (res.is_duplicate) {
-        setDuplicateWarning(res);
-      } else {
-        setDuplicateWarning(null);
-      }
-    } catch (err) {
-      console.error(err);
-    } finally {
-      setIsDuplicateChecking(false);
-    }
-  };
-
-  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (e.target.files && e.target.files[0]) {
-      setImageFile(e.target.files[0]);
-    }
+      const fd = new FormData();
+      fd.append('latitude', latitude.toString());
+      fd.append('longitude', longitude.toString());
+      fd.append('description', description);
+      fd.append('category_name', 'Others');
+      const res = await api.checkDuplicate(fd);
+      setDuplicateWarning(res.is_duplicate ? res : null);
+    } catch { /* silent */ }
+    finally { setIsDuplicateChecking(false); }
   };
 
   const handleSubmitGrievance = async (duplicateOfId?: number) => {
-    if (!description) {
-      toast.error("Please enter a description of the issue.");
+    if (!description && !audioFile) {
+      toast.error('Please enter a description or record a voice note.');
       return;
     }
-
     setIsSubmitting(true);
-    const toastId = toast.loading(duplicateOfId ? "Joining issue..." : "Executing AI verification and routing pipeline...");
+    const tid = toast.loading(duplicateOfId ? 'Joining issue...' : 'Running AI pipeline & routing...');
     try {
-      const formData = new FormData();
-      formData.append("description", description);
-      formData.append("language", language);
-      formData.append("location_latitude", latitude.toString());
-      formData.append("location_longitude", longitude.toString());
-      formData.append("location_address", address || "Bengaluru, Karnataka");
-      if (duplicateOfId) {
-        formData.append("duplicate_of_id", duplicateOfId.toString());
-      }
-      if (imageFile) {
-        formData.append("file", imageFile);
-      }
+      const fd = new FormData();
+      fd.append('description', description || 'Voice complaint');
+      fd.append('language', audioFile ? 'Voice' : language);
+      fd.append('location_latitude', latitude.toString());
+      fd.append('location_longitude', longitude.toString());
+      fd.append('location_address', address || 'Bengaluru, Karnataka');
+      if (duplicateOfId) fd.append('duplicate_of_id', duplicateOfId.toString());
+      if (imageFile) fd.append('file', imageFile);
+      if (audioFile) fd.append('audio_file', audioFile);
 
-      const res = await api.raiseComplaint(formData);
-      toast.dismiss(toastId);
+      const res = await api.raiseComplaint(fd);
+      toast.dismiss(tid);
 
       if (duplicateOfId) {
-        toast.success(`Joined existing complaint #${duplicateOfId} successfully!`);
+        toast.success(`Joined complaint #${duplicateOfId}!`);
       } else {
-        toast.success(`Complaint #${res.id} registered! Routed to ${res.department_name} (Priority: ${res.priority})`);
+        const trust = res.evidence_check;
+        toast.success(
+          `Complaint #${res.id} filed! Routed to ${res.department_name} (${res.priority} priority)` +
+          (trust ? ` | Trust: ${trust.trust_level}` : '')
+        );
       }
 
-      // Reset form
-      setDescription('');
-      setImageFile(null);
-      setDuplicateWarning(null);
-      setIsFormOpen(false);
+      setDescription(''); setImageFile(null); setAudioFile(null);
+      setDuplicateWarning(null); setIsFormOpen(false);
       loadDashboardData();
     } catch (err: any) {
-      toast.dismiss(toastId);
-      toast.error(err.message || "Failed to register complaint.");
-    } finally {
-      setIsSubmitting(false);
-    }
+      toast.dismiss(tid);
+      toast.error(err.message || 'Failed to register complaint.');
+    } finally { setIsSubmitting(false); }
   };
 
-  const handleCloseComplaint = async (id: number) => {
+  // ── Citizen verify / reopen ──────────────────────────────────────────────
+  const openVerifyModal = (c: any) => {
+    setVerifyComplaint(c);
+    setFeedbackRating(5);
+    setFeedbackRemarks('');
+    setIsVerifyModalOpen(true);
+  };
+
+  const handleVerifyResolution = async (approve: boolean) => {
+    if (!verifyComplaint) return;
+    setIsVerifying(true);
     try {
-      await api.updateComplaintStatus(id, "Closed", "Citizen marked as satisfied and closed.");
-      toast.success("Complaint closed successfully.");
+      await api.verifyResolution(verifyComplaint.id, {
+        approve,
+        feedback_rating: feedbackRating,
+        feedback_remarks: feedbackRemarks,
+      });
+      toast.success(approve ? 'Complaint closed! Thank you.' : 'Complaint reopened. Officer will re-address it.');
+      setIsVerifyModalOpen(false);
       setSelectedComplaint(null);
       loadDashboardData();
     } catch (err: any) {
-      toast.error(err.message || "Failed to close complaint.");
-    }
+      toast.error(err.message || 'Action failed.');
+    } finally { setIsVerifying(false); }
   };
 
   return (
     <div className="min-h-screen bg-slate-50 dark:bg-slate-950 flex flex-col font-sans">
       {/* Navbar */}
-      <header className="h-16 border-b border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 px-4 md:px-8 flex items-center justify-between z-10">
+      <header className="h-16 border-b border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 px-4 md:px-8 flex items-center justify-between z-10 sticky top-0">
         <Link href="/" className="flex items-center space-x-2">
           <div className="bg-blue-600 text-white p-1.5 rounded-lg">
             <ShieldAlert className="h-5 w-5" />
@@ -205,89 +296,108 @@ export default function CitizenDashboard() {
           <span className="font-bold text-lg text-slate-900 dark:text-white">CivicAI Citizen Portal</span>
         </Link>
         <div className="flex items-center space-x-4">
-          <span className="text-sm font-semibold text-slate-700 dark:text-slate-300">Welcome, {user?.name}</span>
-          <button 
+          <span className="text-sm font-semibold text-slate-700 dark:text-slate-300 hidden sm:block">
+            Welcome, {user?.name}
+          </span>
+          <button
             onClick={handleLogout}
             className="flex items-center space-x-1 text-xs font-bold text-red-600 hover:text-red-700 dark:text-red-400 border border-red-200 dark:border-red-900 bg-red-50 dark:bg-red-950/20 px-3 py-1.5 rounded-lg cursor-pointer transition"
           >
-            <LogOut className="h-3.5 w-3.5" />
-            <span>Logout</span>
+            <LogOut className="h-3.5 w-3.5" /><span>Logout</span>
           </button>
         </div>
       </header>
 
-      {/* Metrics Row */}
-      <section className="grid grid-cols-2 md:grid-cols-5 gap-4 p-4 md:p-6 max-w-7xl mx-auto w-full">
-        <div className="bg-white dark:bg-slate-900 p-4 border border-slate-200 dark:border-slate-800 rounded-xl shadow-sm">
-          <span className="text-xs text-slate-500 font-semibold block uppercase">Total Grievances</span>
-          <span className="text-2xl font-bold text-slate-900 dark:text-white mt-1 block">{stats.total_complaints}</span>
-        </div>
-        <div className="bg-white dark:bg-slate-900 p-4 border border-slate-200 dark:border-slate-800 rounded-xl shadow-sm">
-          <span className="text-xs text-slate-500 font-semibold block uppercase">Active Complaints</span>
-          <span className="text-2xl font-bold text-blue-600 mt-1 block">{stats.active_complaints}</span>
-        </div>
-        <div className="bg-white dark:bg-slate-900 p-4 border border-slate-200 dark:border-slate-800 rounded-xl shadow-sm">
-          <span className="text-xs text-slate-500 font-semibold block uppercase">Resolved Issues</span>
-          <span className="text-2xl font-bold text-emerald-600 mt-1 block">{stats.resolved_complaints}</span>
-        </div>
-        <div className="bg-white dark:bg-slate-900 p-4 border border-slate-200 dark:border-slate-800 rounded-xl shadow-sm">
-          <span className="text-xs text-slate-500 font-semibold block uppercase">Closed Cases</span>
-          <span className="text-2xl font-bold text-slate-500 mt-1 block">{stats.closed_complaints}</span>
-        </div>
-        <div className="bg-white dark:bg-slate-900 p-4 border border-slate-200 dark:border-slate-800 rounded-xl shadow-sm col-span-2 md:col-span-1">
-          <span className="text-xs text-slate-500 font-semibold block uppercase">Pending Action</span>
-          <span className="text-2xl font-bold text-amber-600 mt-1 block">{stats.pending_complaints}</span>
-        </div>
+      {/* Stats Bar */}
+      <section className="grid grid-cols-3 md:grid-cols-6 gap-3 p-4 md:p-6 max-w-7xl mx-auto w-full">
+        {[
+          { label: 'Total',    val: stats.total_complaints,    color: 'text-slate-900 dark:text-white' },
+          { label: 'Active',   val: stats.active_complaints,   color: 'text-blue-600' },
+          { label: 'Resolved', val: stats.resolved_complaints, color: 'text-emerald-600' },
+          { label: 'Closed',   val: stats.closed_complaints,   color: 'text-slate-500' },
+          { label: 'Pending',  val: stats.pending_complaints,  color: 'text-amber-600' },
+          { label: 'Reopened', val: stats.reopened_complaints || 0, color: 'text-rose-600' },
+        ].map(({ label, val, color }) => (
+          <div key={label} className="bg-white dark:bg-slate-900 p-3 border border-slate-200 dark:border-slate-800 rounded-xl shadow-sm">
+            <span className="text-[10px] text-slate-500 font-semibold uppercase block">{label}</span>
+            <span className={`text-xl font-bold mt-1 block ${color}`}>{val}</span>
+          </div>
+        ))}
       </section>
 
-      {/* Main Grid Content */}
+      {/* Main Grid */}
       <main className="flex-1 max-w-7xl mx-auto w-full px-4 md:px-6 pb-8 grid grid-cols-1 lg:grid-cols-5 gap-6">
-        {/* Left Side: Complaints List */}
+
+        {/* ── Left: Complaints List ─────────────────────────────────────────── */}
         <div className="lg:col-span-2 flex flex-col space-y-4">
           <div className="flex items-center justify-between">
-            <h3 className="font-bold text-lg text-slate-900 dark:text-white">Grievance History</h3>
-            <button 
+            <h3 className="font-bold text-lg text-slate-900 dark:text-white">My Grievances</h3>
+            <button
               onClick={() => setIsFormOpen(true)}
-              className="bg-blue-600 hover:bg-blue-700 text-white rounded-lg px-3 py-1.5 text-xs font-bold shadow flex items-center space-x-1 cursor-pointer"
+              className="bg-blue-600 hover:bg-blue-700 text-white rounded-lg px-3 py-1.5 text-xs font-bold shadow flex items-center space-x-1 cursor-pointer transition"
             >
-              <Plus className="h-4 w-4" />
-              <span>Report Grievance</span>
+              <Plus className="h-4 w-4" /><span>Report Issue</span>
             </button>
           </div>
 
-          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl flex-1 max-h-[600px] overflow-y-auto p-4 space-y-3">
+          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl flex-1 max-h-[640px] overflow-y-auto p-3 space-y-2">
             {complaints.length === 0 ? (
-              <div className="text-center py-12 text-slate-400">
+              <div className="text-center py-16 text-slate-400">
                 <Clock className="h-10 w-10 mx-auto text-slate-300 dark:text-slate-700 mb-2" />
                 <p className="text-xs font-semibold">No complaints reported yet.</p>
               </div>
             ) : (
               complaints.map((c) => (
-                <div 
+                <div
                   key={c.id}
                   onClick={() => setSelectedComplaint(c)}
-                  className={`p-3 rounded-lg border text-left cursor-pointer transition-all ${
-                    selectedComplaint?.id === c.id 
-                      ? 'border-blue-500 bg-blue-50/20 dark:bg-blue-900/10' 
+                  className={`p-3 rounded-xl border text-left cursor-pointer transition-all ${
+                    selectedComplaint?.id === c.id
+                      ? 'border-blue-500 bg-blue-50/30 dark:bg-blue-900/10'
                       : 'border-slate-100 dark:border-slate-800 hover:border-slate-300 dark:hover:border-slate-700'
                   }`}
                 >
-                  <div className="flex items-center justify-between mb-1.5">
-                    <span className="text-[10px] font-bold text-slate-400">ID: #{c.id}</span>
-                    <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold uppercase ${
-                      c.status === 'Resolved' ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950/30 dark:text-emerald-300' :
-                      c.status === 'Closed' ? 'bg-slate-100 text-slate-800 dark:bg-slate-800 dark:text-slate-300' :
-                      c.status === 'In Progress' ? 'bg-purple-100 text-purple-800 dark:bg-purple-950/30 dark:text-purple-300' :
-                      'bg-blue-100 text-blue-800 dark:bg-blue-950/30 dark:text-blue-300'
-                    }`}>
+                  <div className="flex items-center justify-between mb-1">
+                    <span className="text-[10px] font-bold text-slate-400">#{c.id}</span>
+                    <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold uppercase ${statusClass(c.status)}`}>
                       {c.status}
                     </span>
                   </div>
                   <h4 className="font-bold text-sm text-slate-900 dark:text-white">{c.category_name}</h4>
-                  <p className="text-xs text-slate-500 dark:text-slate-400 line-clamp-2 mt-1">{c.description}</p>
-                  
-                  <div className="flex items-center justify-between mt-3 text-[10px] text-slate-400 font-semibold border-t border-slate-100 dark:border-slate-800/50 pt-2">
-                    <span>Route: <span className="bg-slate-100 dark:bg-slate-800 px-1 py-0.5 rounded">{c.department_name}</span></span>
+                  <p className="text-xs text-slate-500 dark:text-slate-400 line-clamp-2 mt-0.5">{c.description}</p>
+                  {c.audio_url && (
+                    <span className="inline-flex items-center gap-1 mt-1 text-[10px] text-indigo-600 dark:text-indigo-400 font-semibold">
+                      <Volume2 className="h-3 w-3" /> Voice Note
+                    </span>
+                  )}
+
+                  {/* SLA bar on card */}
+                  {c.sla_summary && c.status !== 'Closed' && (
+                    <SLABar slaSummary={c.sla_summary} />
+                  )}
+
+                  {/* Evidence trust badge */}
+                  {c.evidence_check && (
+                    <div className="mt-1.5">
+                      <TrustBadge level={c.evidence_check.trust_level} score={Math.round(c.evidence_check.trust_score)} />
+                    </div>
+                  )}
+
+                  {/* Pending verification banner */}
+                  {c.status === 'Resolved' && c.citizen_verified === null && (
+                    <div className="mt-2 bg-amber-50 dark:bg-amber-950/20 border border-amber-200 dark:border-amber-800 rounded-lg px-2 py-1 flex items-center justify-between">
+                      <span className="text-[10px] font-bold text-amber-700 dark:text-amber-400">⏳ Awaiting your verification</span>
+                      <button
+                        onClick={(e) => { e.stopPropagation(); openVerifyModal(c); }}
+                        className="text-[10px] bg-amber-600 hover:bg-amber-700 text-white px-2 py-0.5 rounded font-bold transition"
+                      >
+                        Verify
+                      </button>
+                    </div>
+                  )}
+
+                  <div className="flex items-center justify-between mt-2 text-[10px] text-slate-400 font-semibold border-t border-slate-100 dark:border-slate-800/50 pt-1.5">
+                    <span className="bg-slate-100 dark:bg-slate-800 px-1.5 py-0.5 rounded">{c.department_name}</span>
                     <span>{new Date(c.created_at).toLocaleDateString()}</span>
                   </div>
                 </div>
@@ -296,324 +406,379 @@ export default function CitizenDashboard() {
           </div>
         </div>
 
-        {/* Right Side: Map & Interactive details */}
+        {/* ── Right: Map + Details ──────────────────────────────────────────── */}
         <div className="lg:col-span-3 flex flex-col space-y-4">
-          <h3 className="font-bold text-lg text-slate-900 dark:text-white">Active Grievance Map Area</h3>
-          
-          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-4 rounded-xl flex-1 min-h-[400px] flex flex-col shadow-sm">
-            <div className="flex-1 relative rounded-lg overflow-hidden border border-slate-100 dark:border-slate-800">
-              <MapComponent 
-                center={[latitude, longitude]} 
-                zoom={14} 
-                markers={nearbyComplaints.map(nc => ({
-                  id: nc.id,
-                  latitude: nc.location_latitude,
-                  longitude: nc.location_longitude,
-                  title: nc.description,
-                  status: nc.status,
-                  category: nc.category_name
-                }))}
-                onLocationSelect={(lat, lon) => {
-                  setLatitude(lat);
-                  setLongitude(lon);
-                  setAddress(`Pinned Coordinates: (${lat.toFixed(5)}, ${lon.toFixed(5)})`);
-                }}
-                interactive={isFormOpen}
-              />
-            </div>
-            
-            {isFormOpen && (
-              <p className="text-[10px] text-slate-400 mt-2 font-medium flex items-center space-x-1 justify-center">
-                <Info className="h-3 w-3" />
-                <span>Map is interactive. Click anywhere on the map above to select complaint location coordinates.</span>
-              </p>
-            )}
+          {/* Map */}
+          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl overflow-hidden h-64">
+            <MapComponent
+              center={[latitude, longitude]}
+              zoom={13}
+              onLocationSelect={(lat, lng) => {
+                setLatitude(lat);
+                setLongitude(lng);
+                setAddress(`Pin: (${lat.toFixed(5)}, ${lng.toFixed(5)})`);
+              }}
+              markers={nearbyComplaints.map((c) => ({
+                id: c.id,
+                latitude: c.location_latitude,
+                longitude: c.location_longitude,
+                title: c.category_name,
+                status: c.status,
+                category: c.category_name,
+              }))}
+              interactive={true}
+            />
           </div>
+
+          {/* Selected complaint detail */}
+          {selectedComplaint ? (
+            <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-5 flex-1 overflow-y-auto space-y-4">
+              <div className="flex items-start justify-between">
+                <div>
+                  <span className="text-xs text-slate-400 font-bold">Complaint #{selectedComplaint.id}</span>
+                  <h3 className="font-bold text-lg text-slate-900 dark:text-white mt-0.5">{selectedComplaint.category_name}</h3>
+                  <p className="text-xs text-slate-500 mt-1">{selectedComplaint.description}</p>
+                </div>
+                <span className={`text-xs px-3 py-1 rounded-full font-bold ${statusClass(selectedComplaint.status)}`}>
+                  {selectedComplaint.status}
+                </span>
+              </div>
+
+              {/* SLA summary */}
+              {selectedComplaint.sla_summary && selectedComplaint.status !== 'Closed' && (
+                <div className="bg-slate-50 dark:bg-slate-800/50 rounded-xl p-3 border border-slate-100 dark:border-slate-700">
+                  <p className="text-xs font-bold text-slate-600 dark:text-slate-300 mb-1.5 flex items-center gap-1">
+                    <Clock className="h-3.5 w-3.5" /> SLA Status
+                  </p>
+                  <SLABar slaSummary={selectedComplaint.sla_summary} />
+                  {selectedComplaint.sla_summary.hours_remaining !== null && (
+                    <p className="text-[10px] text-slate-500 mt-1">
+                      {selectedComplaint.sla_summary.hours_remaining > 0
+                        ? `${selectedComplaint.sla_summary.hours_remaining.toFixed(1)}h remaining`
+                        : `Overdue by ${Math.abs(selectedComplaint.sla_summary.hours_remaining).toFixed(1)}h`}
+                    </p>
+                  )}
+                </div>
+              )}
+
+              {/* Evidence Trust */}
+              {selectedComplaint.evidence_check && (
+                <div className="bg-slate-50 dark:bg-slate-800/50 rounded-xl p-3 border border-slate-100 dark:border-slate-700">
+                  <p className="text-xs font-bold text-slate-600 dark:text-slate-300 mb-1.5 flex items-center gap-1">
+                    <Shield className="h-3.5 w-3.5" /> Evidence Trust Score
+                  </p>
+                  <div className="flex items-center gap-2">
+                    <div className="text-2xl font-extrabold text-slate-900 dark:text-white">
+                      {Math.round(selectedComplaint.evidence_check.trust_score)}%
+                    </div>
+                    <TrustBadge level={selectedComplaint.evidence_check.trust_level} score={Math.round(selectedComplaint.evidence_check.trust_score)} />
+                  </div>
+                  <p className="text-[10px] text-slate-500 dark:text-slate-400 mt-1.5 leading-relaxed">
+                    {selectedComplaint.evidence_check.verification_details}
+                  </p>
+                </div>
+              )}
+
+              {/* AI Prediction */}
+              {selectedComplaint.ai_prediction && (
+                <div className="bg-gradient-to-br from-blue-50 to-indigo-50 dark:from-blue-950/20 dark:to-indigo-950/20 rounded-xl p-3 border border-blue-100 dark:border-blue-800">
+                  <p className="text-xs font-bold text-blue-700 dark:text-blue-300 mb-2">⚡ AI Analysis</p>
+                  <div className="grid grid-cols-3 gap-2 text-center">
+                    <div>
+                      <p className="text-[10px] text-slate-500">Category</p>
+                      <p className="text-xs font-bold text-slate-800 dark:text-white">{selectedComplaint.ai_prediction.predicted_category_name}</p>
+                      <p className="text-[10px] text-blue-600">{(selectedComplaint.ai_prediction.category_confidence * 100).toFixed(0)}%</p>
+                    </div>
+                    <div>
+                      <p className="text-[10px] text-slate-500">Priority</p>
+                      <p className="text-xs font-bold text-slate-800 dark:text-white">{selectedComplaint.ai_prediction.predicted_priority}</p>
+                      <p className="text-[10px] text-blue-600">{(selectedComplaint.ai_prediction.priority_confidence * 100).toFixed(0)}%</p>
+                    </div>
+                    <div>
+                      <p className="text-[10px] text-slate-500">Input Mode</p>
+                      <p className="text-xs font-bold text-slate-800 dark:text-white">
+                        {selectedComplaint.ai_prediction.transcription_used ? '🎤 Voice' : '📝 Text'}
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Reopen info */}
+              {selectedComplaint.reopen_count > 0 && (
+                <div className="flex items-center gap-2 text-xs text-rose-700 dark:text-rose-400 bg-rose-50 dark:bg-rose-950/20 rounded-lg px-3 py-2 border border-rose-200 dark:border-rose-800">
+                  <RefreshCw className="h-3.5 w-3.5" />
+                  <span>Reopened {selectedComplaint.reopen_count} time(s) — Officer is re-addressing the issue.</span>
+                </div>
+              )}
+
+              {/* Audio playback */}
+              {selectedComplaint.audio_url && (
+                <div className="flex items-center gap-2 bg-indigo-50 dark:bg-indigo-950/20 rounded-lg px-3 py-2 border border-indigo-200 dark:border-indigo-800">
+                  <Volume2 className="h-4 w-4 text-indigo-600" />
+                  <audio controls className="flex-1 h-8" src={`http://127.0.0.1:8000${selectedComplaint.audio_url}`} />
+                </div>
+              )}
+
+              {/* Status history */}
+              {selectedComplaint.status_history?.length > 0 && (
+                <div>
+                  <p className="text-xs font-bold text-slate-600 dark:text-slate-300 mb-2">Timeline</p>
+                  <div className="space-y-1.5">
+                    {selectedComplaint.status_history.map((h: any) => (
+                      <div key={h.id} className="flex items-start gap-2 text-[10px]">
+                        <div className="w-1.5 h-1.5 rounded-full bg-blue-500 mt-1 shrink-0" />
+                        <div>
+                          <span className="font-bold text-slate-700 dark:text-slate-200">{h.status}</span>
+                          <span className="text-slate-400 ml-1">— {h.changed_by_name}</span>
+                          <p className="text-slate-500">{h.remarks}</p>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Citizen verification action */}
+              {selectedComplaint.status === 'Resolved' && selectedComplaint.citizen_verified === null && (
+                <div className="border-t border-slate-100 dark:border-slate-800 pt-3">
+                  <p className="text-xs font-bold text-slate-700 dark:text-slate-200 mb-2">
+                    ✅ Officer has marked this Resolved. Was the issue fixed?
+                  </p>
+                  <div className="flex gap-2">
+                    <button
+                      onClick={() => openVerifyModal(selectedComplaint)}
+                      className="flex-1 flex items-center justify-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold py-2 rounded-lg transition"
+                    >
+                      <ThumbsUp className="h-4 w-4" /> Verify & Respond
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {/* Feedback shown if already verified */}
+              {selectedComplaint.citizen_verified !== null && selectedComplaint.status === 'Closed' && (
+                <div className="bg-emerald-50 dark:bg-emerald-950/20 border border-emerald-200 dark:border-emerald-800 rounded-lg px-3 py-2 text-xs text-emerald-700 dark:text-emerald-300 font-semibold">
+                  ✅ You approved this resolution. Rated {selectedComplaint.citizen_feedback_rating}/5 stars.
+                </div>
+              )}
+            </div>
+          ) : (
+            <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-8 flex-1 flex flex-col items-center justify-center text-slate-400">
+              <Info className="h-8 w-8 mb-2 text-slate-300 dark:text-slate-700" />
+              <p className="text-sm font-semibold">Select a complaint to view details</p>
+              <p className="text-xs mt-1">Or pin a location on the map above</p>
+            </div>
+          )}
         </div>
       </main>
 
-      {/* Floating Action Modal: Report Grievance */}
+      {/* ── File New Grievance Modal ──────────────────────────────────────── */}
       {isFormOpen && (
-        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4 z-50 animate-fade-in">
-          <div className="bg-white dark:bg-slate-900 rounded-2xl max-w-xl w-full border border-slate-200 dark:border-slate-800 shadow-xl overflow-hidden animate-slide-up">
-            <div className="bg-slate-900 dark:bg-slate-950 px-6 py-4 flex items-center justify-between text-white">
-              <h3 className="font-bold text-lg">Report New Grievance</h3>
-              <button 
-                onClick={() => {
-                  setIsFormOpen(false);
-                  setDuplicateWarning(null);
-                }} 
-                className="text-slate-400 hover:text-white text-sm cursor-pointer"
-              >
-                Close
-              </button>
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-white dark:bg-slate-900 rounded-2xl shadow-2xl w-full max-w-lg max-h-[90vh] overflow-y-auto p-6 border border-slate-200 dark:border-slate-800">
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="font-extrabold text-xl text-slate-900 dark:text-white">Report a Civic Issue</h2>
+              <button onClick={() => setIsFormOpen(false)} className="text-slate-400 hover:text-slate-600 text-xl font-bold">✕</button>
             </div>
-            
-            <div className="p-6 space-y-4 max-h-[500px] overflow-y-auto">
+
+            <div className="space-y-4">
               {/* Description */}
               <div>
-                <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Complaint Description <span className="text-red-500">*</span></label>
+                <label className="block text-xs font-bold text-slate-600 dark:text-slate-300 mb-1">Issue Description *</label>
                 <textarea
-                  rows={3}
                   value={description}
                   onChange={(e) => setDescription(e.target.value)}
                   onBlur={runDuplicateCheck}
-                  placeholder="Describe your civic issue (you can mix English, Kannada, and Hinglish. E.g., layout nalli garbage pile agide.)"
-                  className="w-full rounded-xl border border-slate-300 dark:border-slate-800 bg-slate-50 dark:bg-slate-900 p-3 text-sm focus:ring-2 focus:ring-blue-500 outline-none text-slate-800 dark:text-slate-100"
-                ></textarea>
+                  placeholder="Describe the civic problem in English, Kannada, or Hinglish..."
+                  className="w-full border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-white rounded-xl px-3 py-2.5 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  rows={3}
+                />
               </div>
 
-              {/* Language selection */}
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Input Language</label>
-                  <select 
-                    value={language}
-                    onChange={(e) => setLanguage(e.target.value)}
-                    className="w-full rounded-xl border border-slate-300 dark:border-slate-800 bg-slate-50 dark:bg-slate-900 p-3 text-sm focus:ring-2 focus:ring-blue-500 outline-none text-slate-800 dark:text-slate-100"
+              {/* Voice Recording */}
+              <div className="border border-dashed border-indigo-200 dark:border-indigo-800 rounded-xl p-3 bg-indigo-50/50 dark:bg-indigo-950/20">
+                <p className="text-xs font-bold text-indigo-700 dark:text-indigo-300 mb-2">🎤 Voice Complaint (Optional)</p>
+                {!isRecording && !audioFile && (
+                  <button
+                    onClick={startRecording}
+                    type="button"
+                    className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold px-4 py-2 rounded-lg transition"
                   >
-                    <option value="English">English</option>
-                    <option value="Kannada">ಕನ್ನಡ (Kannada)</option>
-                    <option value="Hinglish">Hinglish / Kannada-English</option>
-                  </select>
-                </div>
-                {/* Photo Upload */}
-                <div>
-                  <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Grievance Photo</label>
-                  <div className="relative rounded-xl border border-slate-300 dark:border-slate-800 bg-slate-50 dark:bg-slate-900 p-3 text-sm flex items-center space-x-2">
-                    <ImageIcon className="h-4.5 w-4.5 text-slate-400" />
-                    <input 
-                      type="file" 
-                      accept="image/*" 
-                      onChange={handleFileChange}
-                      className="text-xs file:hidden text-slate-500 dark:text-slate-400 w-full cursor-pointer"
-                    />
-                    {imageFile && <span className="text-[10px] text-emerald-600 font-bold block truncate max-w-[80px]">File Selected</span>}
+                    <Mic className="h-3.5 w-3.5" /> Start Recording
+                  </button>
+                )}
+                {isRecording && (
+                  <div className="flex items-center gap-3">
+                    <div className="w-2.5 h-2.5 bg-red-500 rounded-full animate-pulse" />
+                    <span className="text-xs font-bold text-red-600">Recording... {recordingSeconds}s</span>
+                    <button onClick={stopRecording} className="ml-auto bg-red-600 hover:bg-red-700 text-white text-xs font-bold px-3 py-1.5 rounded-lg flex items-center gap-1 transition">
+                      <MicOff className="h-3.5 w-3.5" /> Stop
+                    </button>
                   </div>
-                </div>
+                )}
+                {audioFile && !isRecording && (
+                  <div className="flex items-center gap-2">
+                    <CheckCircle2 className="h-4 w-4 text-emerald-500" />
+                    <span className="text-xs font-semibold text-emerald-700 dark:text-emerald-400">{audioFile.name}</span>
+                    <button onClick={() => setAudioFile(null)} className="ml-auto text-xs text-rose-500 hover:text-rose-700 font-bold">Remove</button>
+                  </div>
+                )}
               </div>
 
-              {/* Geotagging coordinates */}
-              <div className="space-y-2">
-                <div className="flex items-center justify-between">
-                  <label className="block text-xs font-bold text-slate-500 uppercase">Grievance Location Coordinates</label>
-                  <button 
-                    onClick={handleAutoLocate}
-                    className="text-[10px] font-bold text-blue-600 hover:text-blue-700 flex items-center space-x-1 cursor-pointer"
-                  >
-                    <Navigation className="h-3 w-3" />
-                    <span>Auto Detect GPS</span>
+              {/* Language */}
+              <div>
+                <label className="block text-xs font-bold text-slate-600 dark:text-slate-300 mb-1">Language</label>
+                <select
+                  value={language}
+                  onChange={(e) => setLanguage(e.target.value)}
+                  className="w-full border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-white rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                >
+                  {['English', 'Kannada', 'Hinglish'].map(l => <option key={l}>{l}</option>)}
+                </select>
+              </div>
+
+              {/* Location */}
+              <div>
+                <label className="block text-xs font-bold text-slate-600 dark:text-slate-300 mb-1">Location</label>
+                <div className="flex gap-2">
+                  <input
+                    readOnly
+                    value={address || `(${latitude.toFixed(4)}, ${longitude.toFixed(4)})`}
+                    className="flex-1 border border-slate-200 dark:border-slate-700 bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 rounded-xl px-3 py-2 text-xs"
+                  />
+                  <button onClick={handleAutoLocate} type="button" className="bg-blue-600 hover:bg-blue-700 text-white px-3 py-2 rounded-xl text-xs font-bold flex items-center gap-1 transition">
+                    <Navigation className="h-3.5 w-3.5" /> GPS
                   </button>
                 </div>
-                <div className="grid grid-cols-2 gap-4 text-xs font-semibold">
-                  <div className="bg-slate-100 dark:bg-slate-800 p-3 rounded-lg border border-slate-200 dark:border-slate-850">
-                    <span className="text-[10px] text-slate-400 block font-normal">Latitude</span>
-                    {latitude.toFixed(6)}
-                  </div>
-                  <div className="bg-slate-100 dark:bg-slate-800 p-3 rounded-lg border border-slate-200 dark:border-slate-850">
-                    <span className="text-[10px] text-slate-400 block font-normal">Longitude</span>
-                    {longitude.toFixed(6)}
-                  </div>
-                </div>
               </div>
 
-              {/* Duplicate check warning */}
-              {isDuplicateChecking && (
-                <div className="flex items-center space-x-2 text-xs text-blue-600 dark:text-blue-400 animate-pulse bg-blue-50/30 p-3 rounded-xl">
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                  <span>Scanning local grid for duplicate grievances...</span>
-                </div>
-              )}
-
-              {duplicateWarning && (
-                <div className="bg-amber-50 border border-amber-200 dark:bg-amber-950/20 dark:border-amber-900 rounded-xl p-4 space-y-3">
-                  <div className="flex items-start space-x-2 text-amber-800 dark:text-amber-300">
-                    <AlertTriangle className="h-5 w-5 shrink-0 mt-0.5" />
-                    <div>
-                      <h4 className="text-xs font-bold">Duplicate Grievance Detected Nearby!</h4>
-                      <p className="text-[11px] mt-0.5">An issue of the same category has already been reported within 100 meters (Similarity: {(duplicateWarning.similarity_score * 100).toFixed(0)}%).</p>
+              {/* Image */}
+              <div>
+                <label className="block text-xs font-bold text-slate-600 dark:text-slate-300 mb-1">Evidence Photo (Optional)</label>
+                <label className="flex flex-col items-center justify-center border-2 border-dashed border-slate-200 dark:border-slate-700 rounded-xl p-4 cursor-pointer hover:border-blue-400 dark:hover:border-blue-600 transition bg-slate-50 dark:bg-slate-800/50">
+                  {imageFile ? (
+                    <div className="flex items-center gap-2 text-sm text-emerald-700 dark:text-emerald-400 font-semibold">
+                      <CheckCircle2 className="h-4 w-4" /> {imageFile.name}
                     </div>
+                  ) : (
+                    <>
+                      <ImageIcon className="h-6 w-6 text-slate-400 mb-1" />
+                      <span className="text-xs text-slate-500">Click to upload photo</span>
+                    </>
+                  )}
+                  <input type="file" accept="image/*" className="hidden" onChange={(e) => e.target.files?.[0] && setImageFile(e.target.files[0])} />
+                </label>
+              </div>
+
+              {/* Duplicate Warning */}
+              {isDuplicateChecking && (
+                <div className="flex items-center gap-2 text-xs text-slate-500 bg-slate-50 dark:bg-slate-800 rounded-lg px-3 py-2">
+                  <Loader2 className="h-3.5 w-3.5 animate-spin text-blue-500" /> Checking for similar reports nearby...
+                </div>
+              )}
+              {duplicateWarning?.is_duplicate && (
+                <div className="bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 rounded-xl p-3">
+                  <div className="flex items-center gap-2 mb-2">
+                    <AlertTriangle className="h-4 w-4 text-amber-600" />
+                    <span className="text-xs font-bold text-amber-800 dark:text-amber-300">Similar Report Found Nearby!</span>
                   </div>
-                  <div className="flex space-x-2 pt-1.5 justify-end">
-                    <button 
+                  <p className="text-xs text-amber-700 dark:text-amber-400 mb-3">{duplicateWarning.message}</p>
+                  <div className="flex gap-2">
+                    <button
                       onClick={() => handleSubmitGrievance(duplicateWarning.duplicate_of_id)}
-                      className="bg-amber-600 hover:bg-amber-700 text-white rounded-lg px-3 py-1.5 text-[10px] font-bold shadow cursor-pointer transition"
+                      disabled={isSubmitting}
+                      className="flex-1 bg-amber-600 hover:bg-amber-700 text-white text-xs font-bold py-2 rounded-lg flex items-center justify-center gap-1 transition"
                     >
-                      Join Existing Issue #{duplicateWarning.duplicate_of_id}
+                      <ArrowRight className="h-3.5 w-3.5" /> Join Existing (#{duplicateWarning.duplicate_of_id})
                     </button>
-                    <button 
-                      onClick={() => setDuplicateWarning(null)}
-                      className="bg-white hover:bg-slate-50 border border-slate-200 rounded-lg px-3 py-1.5 text-[10px] font-bold text-slate-600 dark:bg-slate-900 dark:border-slate-800 dark:hover:bg-slate-800 cursor-pointer transition"
+                    <button
+                      onClick={() => handleSubmitGrievance()}
+                      disabled={isSubmitting}
+                      className="flex-1 border border-amber-300 dark:border-amber-700 text-amber-800 dark:text-amber-300 text-xs font-bold py-2 rounded-lg hover:bg-amber-100 dark:hover:bg-amber-900/20 transition"
                     >
-                      Ignore & Create New
+                      File as New
                     </button>
                   </div>
                 </div>
               )}
-            </div>
 
-            <div className="bg-slate-50 dark:bg-slate-950 px-6 py-4 border-t border-slate-200 dark:border-slate-800 flex justify-end space-x-2">
-              <button 
-                onClick={() => {
-                  setIsFormOpen(false);
-                  setDuplicateWarning(null);
-                }}
-                className="bg-white hover:bg-slate-50 border border-slate-200 dark:bg-slate-900 dark:border-slate-800 dark:hover:bg-slate-800 rounded-xl px-4 py-2.5 text-xs font-semibold text-slate-700 dark:text-slate-300 transition cursor-pointer"
-              >
-                Cancel
-              </button>
-              <button 
-                onClick={() => handleSubmitGrievance()}
-                disabled={isSubmitting}
-                className="bg-blue-600 hover:bg-blue-700 text-white rounded-xl px-5 py-2.5 text-xs font-bold shadow transition flex items-center space-x-1.5 cursor-pointer"
-              >
-                {isSubmitting ? (
-                  <Loader2 className="h-4.5 w-4.5 animate-spin" />
-                ) : (
-                  <>
-                    <span>Submit Grievance</span>
-                    <ArrowRight className="h-4 w-4" />
-                  </>
-                )}
-              </button>
+              {!duplicateWarning?.is_duplicate && (
+                <button
+                  onClick={() => handleSubmitGrievance()}
+                  disabled={isSubmitting || (!description && !audioFile)}
+                  className="w-full bg-blue-600 hover:bg-blue-700 disabled:bg-slate-300 dark:disabled:bg-slate-700 text-white font-bold py-3 rounded-xl text-sm flex items-center justify-center gap-2 transition"
+                >
+                  {isSubmitting ? (
+                    <><Loader2 className="h-4 w-4 animate-spin" /> Processing...</>
+                  ) : (
+                    <><MessageSquare className="h-4 w-4" /> Submit Complaint</>
+                  )}
+                </button>
+              )}
             </div>
           </div>
         </div>
       )}
 
-      {/* Floating Action Modal: Complaint Detail Detail Overlay */}
-      {selectedComplaint && (
-        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4 z-50 animate-fade-in">
-          <div className="bg-white dark:bg-slate-900 rounded-2xl max-w-2xl w-full border border-slate-200 dark:border-slate-800 shadow-xl overflow-hidden animate-slide-up flex flex-col max-h-[600px]">
-            <div className="bg-slate-900 dark:bg-slate-950 px-6 py-4 flex items-center justify-between text-white shrink-0">
-              <div>
-                <h3 className="font-bold text-base">Grievance Detail Trace</h3>
-                <span className="text-[10px] text-slate-400">ID: #{selectedComplaint.id}</span>
-              </div>
-              <button 
-                onClick={() => setSelectedComplaint(null)} 
-                className="text-slate-400 hover:text-white text-sm cursor-pointer"
-              >
-                Close
-              </button>
-            </div>
-            
-            <div className="p-6 space-y-6 overflow-y-auto flex-1">
-              <div className="grid md:grid-cols-2 gap-6">
-                {/* Text details column */}
-                <div className="space-y-4">
-                  <div>
-                    <span className="text-[10px] font-bold text-slate-400 block uppercase">Category</span>
-                    <span className="font-bold text-base text-slate-900 dark:text-white">{selectedComplaint.category_name}</span>
-                  </div>
-                  <div>
-                    <span className="text-[10px] font-bold text-slate-400 block uppercase">Translated Description</span>
-                    <span className="text-xs text-slate-700 dark:text-slate-300 font-medium block bg-slate-50 dark:bg-slate-850 p-2.5 rounded-lg border border-slate-100 dark:border-slate-800/40">
-                      "{selectedComplaint.description}"
-                    </span>
-                  </div>
-                  {selectedComplaint.original_description && (
-                    <div>
-                      <span className="text-[10px] font-bold text-slate-400 block uppercase">Original Submitted Text</span>
-                      <span className="text-xs text-slate-500 dark:text-slate-400 font-medium block">
-                        "{selectedComplaint.original_description}"
-                      </span>
-                    </div>
-                  )}
-                  <div className="grid grid-cols-2 gap-4 text-xs font-semibold">
-                    <div>
-                      <span className="text-[10px] font-bold text-slate-400 block uppercase">Department Routed</span>
-                      <span className="bg-slate-100 dark:bg-slate-800 px-2 py-0.5 rounded text-[10px] uppercase font-mono mt-0.5 inline-block">{selectedComplaint.department_name}</span>
-                    </div>
-                    <div>
-                      <span className="text-[10px] font-bold text-slate-400 block uppercase">Priority Level</span>
-                      <span className={`text-[10px] font-bold mt-0.5 inline-block ${
-                        selectedComplaint.priority === 'Critical' ? 'text-red-600' :
-                        selectedComplaint.priority === 'High' ? 'text-amber-600' :
-                        selectedComplaint.priority === 'Medium' ? 'text-blue-600' : 'text-slate-500'
-                      }`}>{selectedComplaint.priority}</span>
-                    </div>
-                  </div>
-                </div>
+      {/* ── Citizen Verify / Reopen Modal ─────────────────────────────────── */}
+      {isVerifyModalOpen && verifyComplaint && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-white dark:bg-slate-900 rounded-2xl shadow-2xl w-full max-w-md p-6 border border-slate-200 dark:border-slate-800">
+            <h2 className="font-extrabold text-xl text-slate-900 dark:text-white mb-1">Verify Resolution</h2>
+            <p className="text-xs text-slate-500 mb-4">Complaint #{verifyComplaint.id} — {verifyComplaint.category_name}</p>
 
-                {/* Media columns */}
-                <div className="space-y-4">
-                  {selectedComplaint.images && selectedComplaint.images.length > 0 ? (
-                    <div className="grid grid-cols-2 gap-2">
-                      {selectedComplaint.images.map((img: any) => (
-                        <div key={img.id} className="relative aspect-square bg-slate-100 dark:bg-slate-800 rounded-lg overflow-hidden border border-slate-200 dark:border-slate-800">
-                          <img 
-                            src={`http://127.0.0.1:8000${img.image_url}`} 
-                            alt={img.image_type}
-                            className="w-full h-full object-cover"
-                          />
-                          <div className="absolute bottom-0 inset-x-0 bg-slate-900/60 p-1 text-[8px] text-white text-center font-bold">
-                            {img.image_type} ({img.is_verified ? "Verified" : "Unverified"})
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  ) : (
-                    <div className="h-28 bg-slate-50 dark:bg-slate-850 rounded-lg border border-dashed border-slate-200 dark:border-slate-800 flex items-center justify-center text-xs text-slate-400">
-                      No images attached
-                    </div>
-                  )}
-
-                  {/* AI Metadata monitor */}
-                  {selectedComplaint.ai_prediction && (
-                    <div className="bg-blue-50/40 border border-blue-100 dark:bg-blue-950/20 dark:border-blue-900/40 p-3 rounded-lg text-xs space-y-1.5">
-                      <h4 className="font-bold text-blue-800 dark:text-blue-300 flex items-center space-x-1 text-[10px] uppercase tracking-wide">
-                        <Globe className="h-3.5 w-3.5" />
-                        <span>AI Prediction Trace Log</span>
-                      </h4>
-                      <div className="grid grid-cols-2 text-[10px] text-slate-600 dark:text-slate-400 font-semibold">
-                        <span>Classification Confidence:</span>
-                        <span className="text-right text-slate-800 dark:text-slate-200">{(selectedComplaint.ai_prediction.category_confidence * 100).toFixed(1)}%</span>
-                        <span>Priority Confidence:</span>
-                        <span className="text-right text-slate-800 dark:text-slate-200">{(selectedComplaint.ai_prediction.priority_confidence * 100).toFixed(1)}%</span>
-                        <span>Translation Pipeline:</span>
-                        <span className="text-right text-slate-800 dark:text-slate-200">{selectedComplaint.ai_prediction.translation_time.toFixed(3)}s</span>
-                      </div>
-                    </div>
-                  )}
-                </div>
-              </div>
-
-              {/* Status Timeline Progress */}
-              <div className="border-t border-slate-100 dark:border-slate-800 pt-6">
-                <span className="text-[10px] font-bold text-slate-400 block uppercase mb-4">Redressal Timeline Log</span>
-                <div className="relative border-l border-slate-200 dark:border-slate-800 ml-2.5 space-y-4">
-                  {selectedComplaint.status_history.map((hist: any) => (
-                    <div key={hist.id} className="relative pl-6">
-                      <span className="absolute -left-1.5 top-1.5 w-3 h-3 bg-blue-500 rounded-full border border-white dark:border-slate-900"></span>
-                      <div className="flex items-center space-x-2 text-xs">
-                        <span className="font-bold text-slate-900 dark:text-white">{hist.status}</span>
-                        <span className="text-[10px] text-slate-400 font-medium">{new Date(hist.created_at).toLocaleString()}</span>
-                      </div>
-                      <p className="text-xs text-slate-500 dark:text-slate-400 mt-1 font-semibold">{hist.remarks}</p>
-                      <span className="text-[9px] text-slate-400 font-medium block mt-0.5">Updated by: {hist.changed_by_name}</span>
-                    </div>
+            {/* Resolution images */}
+            {verifyComplaint.images?.filter((i: any) => i.image_type === 'Resolution').length > 0 && (
+              <div className="mb-4">
+                <p className="text-xs font-bold text-slate-600 dark:text-slate-300 mb-1.5">Resolution Evidence Photos:</p>
+                <div className="flex gap-2 overflow-x-auto">
+                  {verifyComplaint.images.filter((i: any) => i.image_type === 'Resolution').map((img: any) => (
+                    <img
+                      key={img.id}
+                      src={`http://127.0.0.1:8000${img.image_url}`}
+                      alt="Resolution"
+                      className="h-28 w-auto object-cover rounded-lg border border-slate-200 dark:border-slate-700"
+                    />
                   ))}
                 </div>
               </div>
-            </div>
+            )}
 
-            <div className="bg-slate-50 dark:bg-slate-950 px-6 py-4 border-t border-slate-200 dark:border-slate-800 flex justify-end space-x-2 shrink-0">
-              <button 
-                onClick={() => setSelectedComplaint(null)}
-                className="bg-white hover:bg-slate-50 border border-slate-200 dark:bg-slate-900 dark:border-slate-800 dark:hover:bg-slate-800 rounded-xl px-4 py-2 text-xs font-semibold text-slate-700 dark:text-slate-300 transition cursor-pointer"
-              >
-                Close Trace
-              </button>
-              
-              {selectedComplaint.status === 'Resolved' && (
-                <button 
-                  onClick={() => handleCloseComplaint(selectedComplaint.id)}
-                  className="bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl px-5 py-2 text-xs font-bold shadow transition cursor-pointer"
+            <div className="space-y-4">
+              <div>
+                <label className="text-xs font-bold text-slate-600 dark:text-slate-300 block mb-1.5">Rate the resolution</label>
+                <StarPicker value={feedbackRating} onChange={setFeedbackRating} />
+              </div>
+              <div>
+                <label className="text-xs font-bold text-slate-600 dark:text-slate-300 block mb-1">Remarks (Optional)</label>
+                <textarea
+                  value={feedbackRemarks}
+                  onChange={(e) => setFeedbackRemarks(e.target.value)}
+                  placeholder="Was the issue properly resolved? Any concerns?"
+                  className="w-full border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-white rounded-xl px-3 py-2 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  rows={2}
+                />
+              </div>
+              <div className="flex gap-3">
+                <button
+                  onClick={() => handleVerifyResolution(true)}
+                  disabled={isVerifying}
+                  className="flex-1 flex items-center justify-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-2.5 rounded-xl text-sm transition"
                 >
-                  Verify & Close Complaint
+                  <ThumbsUp className="h-4 w-4" /> Approve & Close
                 </button>
-              )}
+                <button
+                  onClick={() => handleVerifyResolution(false)}
+                  disabled={isVerifying}
+                  className="flex-1 flex items-center justify-center gap-2 bg-rose-600 hover:bg-rose-700 text-white font-bold py-2.5 rounded-xl text-sm transition"
+                >
+                  <ThumbsDown className="h-4 w-4" /> Reject & Reopen
+                </button>
+              </div>
+              <button onClick={() => setIsVerifyModalOpen(false)} className="w-full text-xs text-slate-400 hover:text-slate-600 py-1 transition">
+                Cancel
+              </button>
             </div>
           </div>
         </div>

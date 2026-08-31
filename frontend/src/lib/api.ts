@@ -122,10 +122,7 @@ export const api = {
     if (params?.status) query.push(`status_filter=${params.status}`);
     if (params?.category_id) query.push(`category_id=${params.category_id}`);
     if (params?.priority) query.push(`priority=${params.priority}`);
-    
-    if (query.length > 0) {
-      url += `?${query.join("&")}`;
-    }
+    if (query.length > 0) url += `?${query.join("&")}`;
     return apiFetch(url);
   },
   
@@ -152,9 +149,32 @@ export const api = {
     });
   },
 
+  /** Citizen verifies or rejects an officer's resolution */
+  verifyResolution: async (id: number, data: {
+    approve: boolean;
+    feedback_rating?: number;
+    feedback_remarks?: string;
+  }) => {
+    return apiFetch(`/complaints/${id}/verify-resolution`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(data)
+    });
+  },
+
+  /** Get the multimodal evidence trust breakdown for a complaint */
+  getComplaintEvidence: async (id: number) => {
+    return apiFetch(`/complaints/${id}/evidence`);
+  },
+
   // Dashboard stats
   getDashboardStats: async (role: "citizen" | "officer" | "admin") => {
     return apiFetch(`/dashboard/${role}`);
+  },
+
+  /** Admin: manually trigger SLA status update across all active complaints */
+  runSlaCheck: async () => {
+    return apiFetch("/dashboard/admin/run-sla-check", { method: "POST" });
   },
 
   // Admin APIs
@@ -204,14 +224,42 @@ export const api = {
   },
   
   markNotificationRead: async (id: number) => {
-    return apiFetch(`/notifications/${id}/read`, {
-      method: "PUT"
-    });
+    return apiFetch(`/notifications/${id}/read`, { method: "PUT" });
   },
   
   markAllNotificationsRead: async () => {
-    return apiFetch("/notifications/read-all", {
-      method: "PUT"
+    return apiFetch("/notifications/read-all", { method: "PUT" });
+  },
+
+  // Predictive Analytics APIs (Phase 16)
+  getPredictiveOverview: async () => {
+    return apiFetch("/predictive/overview");
+  },
+
+  estimateResolutionRisk: async (data: {
+    category: string;
+    ward?: string;
+    priority?: string;
+    department?: string;
+  }) => {
+    return apiFetch("/predictive/estimate", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(data)
+    });
+  },
+
+  getHotspotForecasts: async () => {
+    return apiFetch("/predictive/hotspots");
+  },
+
+  getTimeSeriesForecast: async (days: number = 14) => {
+    return apiFetch(`/predictive/forecast?days=${days}`);
+  },
+
+  trainPredictiveModels: async (maxSamples: number = 100000) => {
+    return apiFetch(`/predictive/train?max_samples=${maxSamples}`, {
+      method: "POST"
     });
   }
 };
