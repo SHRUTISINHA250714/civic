@@ -176,17 +176,31 @@ The platform empowers citizens to report civic grievances using **multilingual n
 * **Classification**: Pre-computes representative embeddings for all 20 categories and classifies incoming text via maximum cosine similarity.
 * **Priority Engine**: Evaluates safety keywords ("accident", "spark", "flood", "danger", "hazard", "injury") combined with category severity weights to output priority (`Critical`, `High`, `Medium`, `Low`) and a confidence score (0.0–1.0).
 
-### Phase 8 — Computer Vision Validation (YOLOv8)
-* **Core Deliverable**: `backend/app/services/vision.py` runs lightweight YOLOv8 (`yolov8n.pt`) on submitted photos.
-* **Visual Object Detection**: Detects bounding boxes for objects such as potholes, waste piles, street lamps, cracks, and safety obstructions. Computes vision confidence score and validates visual alignment with text.
+### Phase 8 — Structured Computer Vision & Image Quality Validation (YOLOv8 & OpenCV)
+* **Core Deliverable**: `backend/app/services/evidence.py` executes structured image analysis and quality diagnostics.
+* **Ultralytics YOLOv8n**: Identifies civic hazard objects, outputting structured payloads:
+  - `detected_objects`: Categorized COCO & civic infrastructure labels
+  - `bounding_boxes`: Label, confidence score, and `[x1, y1, x2, y2]` bounding coordinates
+  - `confidence_scores`: Highest confidence per detected object class
+* **OpenCV Preprocessing & Quality Diagnostics**:
+  - Blurriness detection via Laplacian variance ($\text{var} < 25.0 \implies \text{BLURRY}$)
+  - Exposure diagnostics (underexposed mean brightness $< 25$ or overexposed $> 245$)
+  - Minimum resolution thresholding ($100 \times 100\text{ px}$)
+* **PIL EXIF Metadata Parsing**:
+  - GPS coordinate extraction (DMS rational conversion with hemispheric signs)
+  - UTC capture timestamps (with legacy `_getexif` and modern IFD subtable support)
+  - Camera make/model hardware signatures
 
-### Phase 9 — Geo-Tag & Multimodal Evidence Trust Scoring Engine
-* **Core Deliverable**: `backend/app/services/evidence.py` calculates a composite **Trust Score (0–100%)** and qualitative level (`High`, `Medium`, `Low`, `Suspicious`).
-* **Evaluation Matrix**:
-  * **Live GPS vs. EXIF GPS**: Checks distance delta ($\le 500\text{m} = \text{Match}$).
-  * **Timestamp Sanity**: Verifies photo creation timestamp within realistic recency windows.
-  * **Image-Text Agreement**: Validates whether YOLO detected classes align with the predicted complaint category.
-  * **Audit Log**: Generates human-readable explanations displayed to officers and administrators.
+### Phase 9 — Hard-Gate Multimodal Evidence Verification & Trust Scoring Engine
+* **Core Deliverable**: `backend/app/services/evidence.py` implements a 4-Gate verification architecture with absolute server-side authority.
+* **The 4 Hard Verification Gates**:
+  1. **Gate 1: Live GPS vs EXIF Cross-Validation**: Haversine distance threshold ($\le 500\text{m} \implies \text{MATCH}$, $\ge 5000\text{m} \implies \text{SUSPICIOUS}$). Handles missing EXIF as `EXIF_MISSING`. Incorporates browser `gps_accuracy`.
+  2. **Gate 2: Timestamp Freshness**: Rejects future timestamps ($> 10\text{m} \implies \text{FUTURE} \to \text{MANUAL\_REVIEW}$) and flags stale evidence ($> 72\text{h} \implies \text{STALE} \to \text{MANUAL\_REVIEW}$).
+  3. **Gate 3: Semantic Complaint $\leftrightarrow$ Image Matching**: Cross-evaluates complaint text/category against image content using SentenceTransformers `all-MiniLM-L6-v2` and YOLO object categories. Negative filters for cross-category mismatches (e.g. Pothole complaint with Garbage photo) immediately trigger `MISMATCH`. *Semantic mismatches are strictly barred from being VERIFIED*.
+  4. **Gate 4: Reused Image Detection (Perceptual Hashing)**: Generates 64-bit difference hashes (`dHash`). Hamming distance $\le 4$ detects recycled photos across complaints, flagging `is_reused_image = True` $\to$ `SUSPICIOUS`.
+* **Hard-Gate Decisions**: `VERIFIED`, `PARTIALLY_VERIFIED`, `MANUAL_REVIEW`, `SUSPICIOUS`, `REJECTED`.
+* **Composite Trust Score (0–100%)**: Weighted composition: GPS ($35\%$), Timestamp ($20\%$), Semantic Vision ($45\%$), clamped to $\le 24\%$ on `REJECTED` and $\le 35\%$ on `SUSPICIOUS`.
+* **Audit Endpoint**: `GET /api/v1/complaints/{id}/evidence` exposes the full verification payload to officers and citizens.
 
 ### Phase 10 — Duplicate & Incident Intelligence
 * **Core Deliverable**: `backend/app/services/duplicate.py` stops redundant ticketing and detects localized clusters.
@@ -337,15 +351,15 @@ $$\text{Sim}(u, v) = \frac{\mathbf{u} \cdot \mathbf{v}}{\|\mathbf{u}\|_2 \|\math
 ```
                                   GRIEVANCE CLASSIFICATION
                                              │
-      ┌──────────────────┬───────────────────┼───────────────────┬───────────────────┐
-      ▼                  ▼                   ▼                   ▼                   ▼
-    BBMP               BWSSB               BESCOM              BMRCL             BDA & BTP
-• Garbage          • Water Leakage     • Power Outage      • Metro Track       • Layout Encroach
-• Potholes         • No Water          • Fallen Wire       • Metro Safety      • Illegal Constr.
-• Road Damage      • Sewage Overflow   • Streetlight       • Metro Station     • Traffic Signals
-• Tree Fall
-      │                  │                   │                   │                   │
-      └──────────────────┴───────────────────┼───────────────────┴───────────────────┘
+      ┌──────────────────┬───────────────────┼───────────────────┐
+      ▼                  ▼                   ▼                   ▼
+    BBMP               BESCOM              BWSSB               BSWML
+• Potholes         • Power Outage      • Water Leakage     • Garbage Dumping
+• Road Damage      • Snapped Wire      • Pipe Burst        • Waste Burning
+• Footpath & Drain • Transformer Spark • No Water Supply   • Auto-Tipper Delay
+• Tree Fall        • Voltage Surge     • Sewage Overflow   • Blackspot Cleanup
+      │                  │                   │                   │
+      └──────────────────┴───────────────────┼───────────────────┘
                                              ▼
                                 LEAST-LOAD ASSIGNMENT ALGORITHM
                                              │
@@ -386,14 +400,14 @@ stateDiagram-v2
 * `GET /api/v1/auth/me` — Retrieve active authenticated user profile.
 
 ### Complaints Engine (`/api/v1/complaints`)
-* `POST /api/v1/complaints` — Submit multimodal complaint (Form text, audio URL, image upload, live coordinates).
+* `POST /api/v1/complaints` — Submit multimodal complaint (Form text, audio URL, image upload, live coordinates, GPS accuracy radius).
 * `GET /api/v1/complaints` — Retrieve complaints (Role-filtered: Citizen sees own, Officer sees assigned, Admin sees all).
-* `GET /api/v1/complaints/{id}` — Get full complaint details with AI inference, SLA status, and history.
+* `GET /api/v1/complaints/{id}` — Get full complaint details with AI inference, SLA status, evidence verification status, and history.
 * `PUT /api/v1/complaints/{id}/status` — Officer status transition (`Accepted`, `In Progress`, `Resolved`).
 * `POST /api/v1/complaints/{id}/resolution` — Officer resolution proof submission.
 * `POST /api/v1/complaints/{id}/verify-resolution` — Citizen approve/reject resolution loop.
 * `POST /api/v1/complaints/check-duplicate` — Proximity and semantic duplicate check.
-* `GET /api/v1/complaints/{id}/evidence` — Retrieve multimodal evidence trust analysis.
+* `GET /api/v1/complaints/{id}/evidence` — Retrieve multimodal evidence trust analysis and 4-gate verification diagnostic report.
 
 ### Dashboard & Analytics (`/api/v1/dashboard`)
 * `GET /api/v1/dashboard/admin` — Master admin metrics, SLA compliance, department load, and GIS hotspot counts.
@@ -448,9 +462,12 @@ npm run build
 npm run start
 ```
 
-### 3. Automated End-to-End Verification Suite
+### 3. Automated Verification Suites
 ```powershell
-# Run the complete 17-Phase automated test suite
+# 1. Run the Hard-Gate Evidence Verification Test Suite (11 comprehensive scenarios)
+python -m backend.test_evidence_gates
+
+# 2. Run the complete 17-Phase automated end-to-end test suite
 python backend/test_e2e.py
 ```
 

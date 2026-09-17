@@ -63,6 +63,24 @@ function TrustBadge({ level, score }: { level: string; score: number }) {
   );
 }
 
+// ── Helper: Hard Gate Verification badge ────────────────────────────────────
+function VerificationGateBadge({ decision }: { decision?: string }) {
+  const dec = decision || 'MANUAL_REVIEW';
+  const cfg: Record<string, { cls: string; label: string; icon: string }> = {
+    VERIFIED:           { cls: 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300 border-emerald-200 dark:border-emerald-800', label: 'Gate: Verified', icon: '🛡️' },
+    PARTIALLY_VERIFIED: { cls: 'bg-sky-50 text-sky-700 dark:bg-sky-950/40 dark:text-sky-300 border-sky-200 dark:border-sky-800', label: 'Partially Verified', icon: '🔍' },
+    MANUAL_REVIEW:      { cls: 'bg-amber-50 text-amber-700 dark:bg-amber-950/40 dark:text-amber-300 border-amber-200 dark:border-amber-800', label: 'Manual Review', icon: '⏳' },
+    SUSPICIOUS:         { cls: 'bg-orange-50 text-orange-700 dark:bg-orange-950/40 dark:text-orange-300 border-orange-200 dark:border-orange-800', label: 'Suspicious', icon: '⚠️' },
+    REJECTED:           { cls: 'bg-rose-50 text-rose-700 dark:bg-rose-950/40 dark:text-rose-300 border-rose-200 dark:border-rose-800', label: 'Gate Rejected', icon: '⛔' },
+  };
+  const item = cfg[dec] || cfg.MANUAL_REVIEW;
+  return (
+    <span className={`inline-flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-full font-bold border ${item.cls}`}>
+      {item.icon} {item.label}
+    </span>
+  );
+}
+
 // ── Star rating picker ──────────────────────────────────────────────────────
 function StarPicker({ value, onChange }: { value: number; onChange: (v: number) => void }) {
   return (
@@ -108,6 +126,7 @@ export default function CitizenDashboard() {
   const [language, setLanguage] = useState('English');
   const [latitude, setLatitude] = useState(12.971598);
   const [longitude, setLongitude] = useState(77.594562);
+  const [gpsAccuracy, setGpsAccuracy] = useState<number | null>(null);
   const [address, setAddress] = useState('');
   const [imageFile, setImageFile] = useState<File | null>(null);
   const [audioFile, setAudioFile] = useState<File | null>(null);
@@ -200,11 +219,13 @@ export default function CitizenDashboard() {
       (pos) => {
         setLatitude(pos.coords.latitude);
         setLongitude(pos.coords.longitude);
-        setAddress(`GPS: (${pos.coords.latitude.toFixed(5)}, ${pos.coords.longitude.toFixed(5)})`);
+        setGpsAccuracy(pos.coords.accuracy);
+        setAddress(`GPS: (${pos.coords.latitude.toFixed(5)}, ${pos.coords.longitude.toFixed(5)}) ±${Math.round(pos.coords.accuracy)}m`);
         toast.dismiss(id);
-        toast.success('Location locked!');
+        toast.success(`Location locked (±${Math.round(pos.coords.accuracy)}m)`);
       },
-      () => { toast.dismiss(id); toast.error('GPS failed. Pin location on map.'); }
+      () => { toast.dismiss(id); toast.error('GPS failed. Pin location on map.'); },
+      { enableHighAccuracy: true, timeout: 10000 }
     );
   };
 
@@ -265,6 +286,9 @@ export default function CitizenDashboard() {
       fd.append('location_latitude', latitude.toString());
       fd.append('location_longitude', longitude.toString());
       fd.append('location_address', address || 'Bengaluru, Karnataka');
+      if (gpsAccuracy !== null) {
+        fd.append('gps_accuracy', gpsAccuracy.toString());
+      }
       
       // Pass category override if selected by citizen, or confirmed from AI preview
       if (selectedCategoryId !== 'auto') {
@@ -286,11 +310,11 @@ export default function CitizenDashboard() {
         const trust = res.evidence_check;
         toast.success(
           `Complaint #${res.id} filed! Routed to ${res.department_name} (${res.priority} priority)` +
-          (trust ? ` | Trust: ${trust.trust_level}` : '')
+          (trust ? ` | Gate: ${trust.verification_decision || trust.trust_level}` : '')
         );
       }
 
-      setDescription(''); setImageFile(null); setAudioFile(null);
+      setDescription(''); setImageFile(null); setAudioFile(null); setGpsAccuracy(null);
       setAiPreview(null); setSelectedDeptCode('auto'); setSelectedCategoryId('auto');
       setDuplicateWarning(null); setIsFormOpen(false);
       loadDashboardData();
@@ -417,10 +441,13 @@ export default function CitizenDashboard() {
                     <SLABar slaSummary={c.sla_summary} />
                   )}
 
-                  {/* Evidence trust badge */}
+                  {/* Evidence trust & gate badge */}
                   {c.evidence_check && (
-                    <div className="mt-1.5">
+                    <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
                       <TrustBadge level={c.evidence_check.trust_level} score={Math.round(c.evidence_check.trust_score)} />
+                      {c.evidence_check.verification_decision && (
+                        <VerificationGateBadge decision={c.evidence_check.verification_decision} />
+                      )}
                     </div>
                   )}
 
@@ -502,18 +529,35 @@ export default function CitizenDashboard() {
                 </div>
               )}
 
-              {/* Evidence Trust */}
+              {/* Evidence Trust & Hard Gates */}
               {selectedComplaint.evidence_check && (
                 <div className="bg-slate-50 dark:bg-slate-800/50 rounded-xl p-3 border border-slate-100 dark:border-slate-700">
                   <p className="text-xs font-bold text-slate-600 dark:text-slate-300 mb-1.5 flex items-center gap-1">
-                    <Shield className="h-3.5 w-3.5" /> Evidence Trust Score
+                    <Shield className="h-3.5 w-3.5" /> Evidence Verification & Trust
                   </p>
-                  <div className="flex items-center gap-2">
+                  <div className="flex flex-wrap items-center gap-2">
                     <div className="text-2xl font-extrabold text-slate-900 dark:text-white">
                       {Math.round(selectedComplaint.evidence_check.trust_score)}%
                     </div>
                     <TrustBadge level={selectedComplaint.evidence_check.trust_level} score={Math.round(selectedComplaint.evidence_check.trust_score)} />
+                    <VerificationGateBadge decision={selectedComplaint.evidence_check.verification_decision} />
                   </div>
+
+                  {/* Semantic mismatch warning banner */}
+                  {selectedComplaint.evidence_check.semantic_match_status === 'MISMATCH' && (
+                    <div className="mt-2 p-2 rounded-lg bg-rose-50 dark:bg-rose-950/30 border border-rose-200 dark:border-rose-900 text-rose-700 dark:text-rose-300 text-[11px] font-semibold flex items-center gap-1.5">
+                      <span>⛔</span>
+                      <span>Semantic Mismatch: Uploaded photo does not match reported category. Marked for officer audit.</span>
+                    </div>
+                  )}
+
+                  {selectedComplaint.evidence_check.is_reused_image && (
+                    <div className="mt-2 p-2 rounded-lg bg-orange-50 dark:bg-orange-950/30 border border-orange-200 dark:border-orange-900 text-orange-700 dark:text-orange-300 text-[11px] font-semibold flex items-center gap-1.5">
+                      <span>⚠️</span>
+                      <span>Duplicate photo: This photo matches an earlier submission (#{selectedComplaint.evidence_check.reused_complaint_id}).</span>
+                    </div>
+                  )}
+
                   <p className="text-[10px] text-slate-500 dark:text-slate-400 mt-1.5 leading-relaxed">
                     {selectedComplaint.evidence_check.verification_details}
                   </p>

@@ -102,6 +102,16 @@ backend/static/uploads/*
 uploads/*
 !uploads/.gitkeep
 
+# ── Test Artifacts & Temporary Media ──────────────────────────────────────────
+test_*.jpg
+test_*.jpeg
+test_*.png
+test_*.webm
+test_*.wav
+temp_debug*
+test_evidence*
+test_piexif*
+
 # ── Logs & Temporary Files ────────────────────────────────────────────────────
 *.log
 logs/

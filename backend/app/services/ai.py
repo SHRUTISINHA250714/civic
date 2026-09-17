@@ -1,16 +1,23 @@
 import os
 import re
 import time
+
+# Bypassing the TensorFlow/Keras 3 compatibility issue (MUST be set before importing transformers)
+os.environ["USE_TF"] = "0"
+os.environ["TRANSFORMERS_NO_TF"] = "1"
+os.environ["USE_TORCH"] = "1"
+os.environ["TF_ENABLE_ONEDNN_OPTS"] = "0"
+
 from typing import Tuple, Dict, Any
 from langdetect import detect
 from deep_translator import GoogleTranslator
-from sentence_transformers import SentenceTransformer, util
+try:
+    from sentence_transformers import SentenceTransformer, util
+except Exception as e:
+    print("Warning: could not import SentenceTransformer:", e)
+    SentenceTransformer = None
+    util = None
 from ultralytics import YOLO
-
-# Bypassing the TensorFlow/Keras Keras 3 compatibility issue
-os.environ["USE_TF"] = "NO"
-os.environ["TRANSFORMERS_NO_TF"] = "1"
-os.environ["USE_TORCH"] = "1"
 
 # Initialize models
 print("Initializing AI SentenceTransformer Model...")

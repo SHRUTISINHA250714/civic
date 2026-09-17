@@ -1,6 +1,6 @@
 # CivicAI Karnataka – Smart Civic Grievance Redressal System
 
-An AI-powered multimodal civic grievance management platform built specifically for the State of Karnataka (Bengaluru). The system enables citizens to report complaints via text, native scripts (Kannada / Hinglish / English), voice, and geotagged imagery. It uses computer vision (YOLOv11), NLP multilingual embeddings, geospatial duplicate detection, and dynamic routing to assign tickets to the correct state civic authority and track resolution through SLA enforcement.
+An AI-powered multimodal civic grievance management platform built specifically for the State of Karnataka (Bengaluru). The system enables citizens to report complaints via text, native scripts (Kannada / Hinglish / English), voice, and geotagged imagery. It uses computer vision (Ultralytics YOLOv8), OpenCV quality diagnostics, multimodal hard-gate evidence verification, NLP multilingual embeddings, geospatial duplicate detection, and dynamic routing to assign tickets to the correct state civic authority and track resolution through SLA enforcement.
 
 ---
 
@@ -20,10 +20,16 @@ The platform is wired to four core municipal and utility agencies:
 ## 🚀 Key System Features
 
 * **Multilingual NLP Pipeline**: Automatic detection of Kannada, Kanglish, Hinglish, and English with automated English translation and zero-shot grievance classification.
-* **YOLOv11 Vision Verification**: Real-time validation of complaint images to detect potholes, garbage, water leaks, and street hazards before acceptance.
+* **YOLOv8 & OpenCV Vision Analysis**: Real-time object detection and OpenCV quality diagnostics (evaluating blurriness via Laplacian variance, exposure levels, and resolution).
+* **4-Gate Evidence Verification Engine**: Multi-gate validation preventing fraudulent submissions:
+  1. *Geo*: Live device GPS cross-referenced against EXIF GPS coordinates ($\le 500\text{m}$ match, $\ge 5000\text{m}$ severe mismatch) with device accuracy radius.
+  2. *Timestamp Freshness*: Rejects future timestamps ($> 10\text{m}$) and flags stale photos ($> 72\text{h}$).
+  3. *Semantic Agreement*: SentenceTransformers cosine matching ensuring photo matches reported category. Cross-category mismatches (e.g. pothole complaint with garbage photo) strictly locked to `REJECTED`.
+  4. *Duplicate Image Detection*: 64-bit difference perceptual hashing (`dHash`) with Hamming distance $\le 4$ detecting recycled photos across complaints.
+  * *Decisions*: `VERIFIED`, `PARTIALLY_VERIFIED`, `MANUAL_REVIEW`, `SUSPICIOUS`, `REJECTED`.
 * **Geospatial Duplicate Detection**: 100m radius duplicate scan with cosine text similarity to group duplicate complaints and prevent ticket flooding.
-* **Dynamic SLA Enforcement**: Priority-driven timers (Low: 72h, Medium: 48h, High: 24h, Urgent: 12h) with auto-escalation upon breach.
-* **Citizen Proof Verification**: Citizens must inspect officer resolution proof photos to approve closure or trigger automated re-dispatch.
+* **Dynamic SLA Enforcement**: Priority-driven timers (Low: 72h, Medium: 48h, High: 24h, Critical: 12h) with auto-escalation upon breach.
+* **Citizen Proof Verification**: Citizens inspect officer resolution proof photos to approve closure (with 1–5 star ratings) or trigger automated re-dispatch.
 * **Phase 16 Predictive Analytics**: Random Forest machine learning models trained on historical Janahita datasets for 14-day grievance intake forecasting and SLA breach risk scoring.
 
 ---
@@ -91,10 +97,14 @@ All default test accounts are seeded via `python -m backend.app.seed`:
 
 ## 🧪 Testing & Verification
 
-* **Interactive Manual Testing Guide**: Full 5-track walkthrough in [TESTING_GUIDE.md](file:///c:/Users/Lenovo/Desktop/CIVIC/TESTING_GUIDE.md).
+* **Interactive Manual Testing Guide**: Full 8-track walkthrough in [TESTING_GUIDE.md](file:///c:/Users/Lenovo/Desktop/CIVIC/TESTING_GUIDE.md).
 * **Complete System Documentation & Architecture**: [PROJECT_DOCUMENTATION.md](file:///c:/Users/Lenovo/Desktop/CIVIC/PROJECT_DOCUMENTATION.md).
 * **17-Phase Implementation Blueprint**: [phases.md](file:///c:/Users/Lenovo/Desktop/CIVIC/phases.md).
-* **Automated End-to-End Test Suite**:
+* **Automated Evidence Hard Gates Test Suite (11 Scenarios)**:
+  ```powershell
+  python -m backend.test_evidence_gates
+  ```
+* **Automated End-to-End Test Suite (Phase 1–17)**:
   ```powershell
   python backend/test_e2e.py
   ```

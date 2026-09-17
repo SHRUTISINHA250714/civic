@@ -93,6 +93,9 @@ class ComplaintImage(Base):
     image_type = Column(String, default="Reporting")  # Reporting, Resolution
     is_verified = Column(Boolean, default=False)
     confidence_score = Column(Float, default=0.0)
+    perceptual_hash = Column(String, nullable=True)
+    bounding_boxes = Column(Text, nullable=True)
+    quality_status = Column(String, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     
     complaint = relationship("Complaint", back_populates="images")
@@ -127,28 +130,46 @@ class AIPrediction(Base):
     predicted_category = relationship("ComplaintCategory")
 
 class ComplaintEvidenceCheck(Base):
-    """Multimodal Evidence Trust Score for each complaint."""
+    """Multimodal Evidence Trust Score & Hard Gate Verification for each complaint."""
     __tablename__ = "complaint_evidence_checks"
     
     id = Column(Integer, primary_key=True, index=True)
     complaint_id = Column(Integer, ForeignKey("complaints.id"), unique=True, nullable=False)
     
-    # GPS / EXIF Validation
+    # ── Hard Gate Verification Decision ───────────────────────────────────────
+    verification_decision = Column(String, default="VERIFIED")  # VERIFIED, PARTIALLY_VERIFIED, MANUAL_REVIEW, SUSPICIOUS, REJECTED
+    
+    # ── Gate 1: GPS / EXIF Validation ─────────────────────────────────────────
     live_gps_provided = Column(Boolean, default=False)
     exif_gps_found = Column(Boolean, default=False)
     gps_distance_m = Column(Float, nullable=True)    # Distance between live GPS and EXIF GPS
     gps_match = Column(Boolean, default=True)        # True if within threshold (< 500m)
+    gps_accuracy = Column(Float, nullable=True)      # Accuracy in meters from device
+    geo_status = Column(String, default="MATCH")     # MATCH, MISMATCH, EXIF_MISSING, SUSPICIOUS
     
-    # Image vs Text Agreement
+    # ── Gate 2: Timestamp Consistency ─────────────────────────────────────────
+    timestamp_valid = Column(Boolean, default=True)
+    freshness_status = Column(String, default="FRESH")  # FRESH, STALE, FUTURE, UNKNOWN
+    
+    # ── Gate 3: Image vs Text Semantic Agreement ──────────────────────────────
     vision_objects_detected = Column(String, nullable=True)  # JSON list of YOLO labels
     vision_agreement_score = Column(Float, default=0.5)      # 0.0 - 1.0
+    semantic_match_status = Column(String, default="MATCH")  # MATCH, PARTIAL_MATCH, MISMATCH, UNKNOWN
+    semantic_confidence = Column(Float, default=0.0)
+    image_category = Column(String, nullable=True)
     
-    # Timestamp Consistency
-    timestamp_valid = Column(Boolean, default=True)
+    # ── Gate 4: Reused Image Detection ────────────────────────────────────────
+    is_reused_image = Column(Boolean, default=False)
+    reused_complaint_id = Column(Integer, nullable=True)
+    perceptual_hash = Column(String, nullable=True)
     
-    # Composite Score
-    trust_score = Column(Float, default=50.0)   # 0-100
-    trust_level = Column(String, default="Medium")  # High, Medium, Low, Suspicious
+    # ── Quality & Audit ───────────────────────────────────────────────────────
+    quality_check = Column(String, nullable=True)
+    gate_reasons = Column(Text, nullable=True)       # JSON list of gate reasons
+    
+    # ── Composite Score (Legacy & Trust Display) ──────────────────────────────
+    trust_score = Column(Float, default=50.0)        # 0-100
+    trust_level = Column(String, default="Medium")   # High, Medium, Low, Suspicious
     verification_details = Column(Text, nullable=True)  # Human-readable explanation
     
     created_at = Column(DateTime, default=datetime.utcnow)

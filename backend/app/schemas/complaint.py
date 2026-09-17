@@ -8,6 +8,9 @@ class ComplaintImageResponse(BaseModel):
     image_type: str
     is_verified: bool
     confidence_score: float
+    bounding_boxes: Optional[str] = None
+    quality_status: Optional[str] = None
+    perceptual_hash: Optional[str] = None
     created_at: datetime
     
     class Config:
@@ -37,16 +40,27 @@ class AIPredictionResponse(BaseModel):
         from_attributes = True
 
 class EvidenceCheckResponse(BaseModel):
-    """Multimodal Evidence Trust Score summary."""
+    """Multimodal Evidence Trust Score & Hard Gate Verification summary."""
+    verification_decision: str = "VERIFIED"     # VERIFIED, PARTIALLY_VERIFIED, MANUAL_REVIEW, SUSPICIOUS, REJECTED
     trust_score: float
-    trust_level: str                # High, Medium, Low, Suspicious
+    trust_level: str                            # High, Medium, Low, Suspicious
     live_gps_provided: bool
     exif_gps_found: bool
     gps_distance_m: Optional[float] = None
     gps_match: bool
-    vision_agreement_score: float
-    vision_objects_detected: str    # JSON list string
+    gps_accuracy: Optional[float] = None
+    geo_status: str = "MATCH"                   # MATCH, MISMATCH, EXIF_MISSING, SUSPICIOUS
     timestamp_valid: bool
+    freshness_status: str = "FRESH"             # FRESH, STALE, FUTURE, UNKNOWN
+    vision_objects_detected: str                # JSON list string
+    vision_agreement_score: float
+    semantic_match_status: str = "MATCH"        # MATCH, PARTIAL_MATCH, MISMATCH, UNKNOWN
+    semantic_confidence: float = 0.0
+    image_category: Optional[str] = None
+    is_reused_image: bool = False
+    reused_complaint_id: Optional[int] = None
+    quality_check: Optional[str] = None
+    gate_reasons: Optional[str] = None
     verification_details: Optional[str] = None
     
     class Config:

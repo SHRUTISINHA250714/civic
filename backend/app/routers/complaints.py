@@ -15,7 +15,7 @@ from backend.app.models.complaint import (
 )
 from backend.app.schemas.complaint import (
     ComplaintResponse, DuplicateWarningResponse, ComplaintStatusUpdate,
-    CitizenVerifyResolutionRequest
+    CitizenVerifyResolutionRequest, EvidenceCheckResponse
 )
 from backend.app.routers.deps import get_current_active_user, get_current_citizen, get_current_officer
 from backend.app.services import (
@@ -155,6 +155,9 @@ def serialize_complaint(c: Complaint, db: Session) -> dict:
             "image_type": img.image_type,
             "is_verified": img.is_verified,
             "confidence_score": img.confidence_score,
+            "bounding_boxes": getattr(img, "bounding_boxes", None),
+            "quality_status": getattr(img, "quality_status", None),
+            "perceptual_hash": getattr(img, "perceptual_hash", None),
             "created_at": img.created_at,
         }
         for img in c.images
@@ -188,15 +191,26 @@ def serialize_complaint(c: Complaint, db: Session) -> dict:
     if c.evidence_check:
         ev = c.evidence_check
         evidence_res = {
+            "verification_decision":    getattr(ev, "verification_decision", "VERIFIED") or "VERIFIED",
             "trust_score":              ev.trust_score,
             "trust_level":              ev.trust_level,
             "live_gps_provided":        ev.live_gps_provided,
             "exif_gps_found":           ev.exif_gps_found,
             "gps_distance_m":           ev.gps_distance_m,
             "gps_match":                ev.gps_match,
-            "vision_agreement_score":   ev.vision_agreement_score,
-            "vision_objects_detected":  ev.vision_objects_detected,
+            "gps_accuracy":             getattr(ev, "gps_accuracy", None),
+            "geo_status":               getattr(ev, "geo_status", "MATCH") or "MATCH",
             "timestamp_valid":          ev.timestamp_valid,
+            "freshness_status":         getattr(ev, "freshness_status", "FRESH") or "FRESH",
+            "vision_objects_detected":  ev.vision_objects_detected,
+            "vision_agreement_score":   ev.vision_agreement_score,
+            "semantic_match_status":    getattr(ev, "semantic_match_status", "MATCH") or "MATCH",
+            "semantic_confidence":      getattr(ev, "semantic_confidence", 0.0) or 0.0,
+            "image_category":           getattr(ev, "image_category", None),
+            "is_reused_image":          getattr(ev, "is_reused_image", False) or False,
+            "reused_complaint_id":      getattr(ev, "reused_complaint_id", None),
+            "quality_check":            getattr(ev, "quality_check", None),
+            "gate_reasons":             getattr(ev, "gate_reasons", None),
             "verification_details":     ev.verification_details,
         }
 
@@ -287,6 +301,7 @@ def raise_complaint(
     category_id:        Optional[int]  = Form(None),
     department_id:      Optional[int]  = Form(None),
     duplicate_of_id:    Optional[int]  = Form(None),
+    gps_accuracy:       Optional[float] = Form(None),
     file:               Optional[UploadFile] = File(None),
     audio_file:         Optional[UploadFile] = File(None),
     db: Session = Depends(get_db),
@@ -417,9 +432,9 @@ def raise_complaint(
         # Route to department officer
         assign_officer_to_complaint(db, complaint)
 
-    # ── 8. Handle Image Upload ─────────────────────────────────────────────────
+    # ── 8. Handle Image Upload & Multimodal Evidence Verification ─────────────
     image_path = None
-    detected_objects = []
+    web_url = None
     if file:
         file_ext = os.path.splitext(file.filename or "image.jpg")[1] or ".jpg"
         unique_filename = f"{uuid.uuid4()}{file_ext}"
@@ -432,9 +447,22 @@ def raise_complaint(
         web_url = f"/static/uploads/{unique_filename}"
         image_path = file_path
 
-        # Run YOLO for both verification and evidence trust
-        detected_objects = get_detected_objects(file_path)
-        is_verified, img_conf = verify_image(file_path, predicted_cat_name)
+    # ── 9. Compute Hard-Gate Evidence Verification & Trust Score ──────────────
+    from datetime import datetime
+    evidence_data = compute_evidence_trust(
+        live_lat=location_latitude,
+        live_lon=location_longitude,
+        image_path=image_path,
+        category_name=predicted_cat_name,
+        submission_timestamp=datetime.utcnow(),
+        gps_accuracy=gps_accuracy,
+        db=db,
+        complaint_description=translated_desc,
+    )
+
+    if image_path:
+        is_verified = (evidence_data["verification_decision"] in ["VERIFIED", "PARTIALLY_VERIFIED"])
+        img_conf = evidence_data["semantic_confidence"]
 
         db_image = ComplaintImage(
             complaint_id=complaint.id,
@@ -442,20 +470,13 @@ def raise_complaint(
             image_type="Reporting",
             is_verified=is_verified,
             confidence_score=img_conf,
+            bounding_boxes=evidence_data.get("bounding_boxes"),
+            quality_status=evidence_data.get("quality_check"),
+            perceptual_hash=evidence_data.get("perceptual_hash"),
         )
         db.add(db_image)
         db.flush()
 
-    # ── 9. Compute Multimodal Evidence Trust Score ────────────────────────────
-    from datetime import datetime
-    evidence_data = compute_evidence_trust(
-        live_lat=location_latitude,
-        live_lon=location_longitude,
-        image_path=image_path,
-        detected_yolo_objects=detected_objects if detected_objects else None,
-        category_name=predicted_cat_name,
-        submission_timestamp=datetime.utcnow(),
-    )
     ev_check = ComplaintEvidenceCheck(
         complaint_id=complaint.id,
         live_gps_provided=evidence_data["live_gps_provided"],
@@ -468,6 +489,19 @@ def raise_complaint(
         trust_score=evidence_data["trust_score"],
         trust_level=evidence_data["trust_level"],
         verification_details=evidence_data["verification_details"],
+        # Phase 8/9 hardening fields:
+        verification_decision=evidence_data["verification_decision"],
+        geo_status=evidence_data["geo_status"],
+        gps_accuracy=evidence_data["gps_accuracy"],
+        freshness_status=evidence_data["freshness_status"],
+        semantic_match_status=evidence_data["semantic_match_status"],
+        semantic_confidence=evidence_data["semantic_confidence"],
+        image_category=evidence_data["image_category"],
+        is_reused_image=evidence_data["is_reused_image"],
+        reused_complaint_id=evidence_data["reused_complaint_id"],
+        perceptual_hash=evidence_data["perceptual_hash"],
+        quality_check=evidence_data["quality_check"],
+        gate_reasons=evidence_data["gate_reasons"],
     )
     db.add(ev_check)
 
@@ -549,6 +583,49 @@ def get_complaint_by_id(
     if current_user.role.name == "Citizen" and complaint.citizen_id != current_user.id:
         raise HTTPException(status_code=403, detail="Not authorized to view this complaint")
     return serialize_complaint(complaint, db)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# GET /complaints/{id}/evidence — Phase 9 Hard Gate & Evidence Check Details
+# ─────────────────────────────────────────────────────────────────────────────
+@router.get("/{id}/evidence", response_model=EvidenceCheckResponse)
+def get_complaint_evidence(
+    id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user)
+):
+    complaint = db.query(Complaint).filter(Complaint.id == id).first()
+    if not complaint:
+        raise HTTPException(status_code=404, detail="Complaint not found")
+    if current_user.role.name == "Citizen" and complaint.citizen_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Not authorized to view this complaint")
+    if not complaint.evidence_check:
+        raise HTTPException(status_code=404, detail="Evidence check not found for this complaint")
+
+    ev = complaint.evidence_check
+    return {
+        "verification_decision":    getattr(ev, "verification_decision", "VERIFIED") or "VERIFIED",
+        "trust_score":              ev.trust_score,
+        "trust_level":              ev.trust_level,
+        "live_gps_provided":        ev.live_gps_provided,
+        "exif_gps_found":           ev.exif_gps_found,
+        "gps_distance_m":           ev.gps_distance_m,
+        "gps_match":                ev.gps_match,
+        "gps_accuracy":             getattr(ev, "gps_accuracy", None),
+        "geo_status":               getattr(ev, "geo_status", "MATCH") or "MATCH",
+        "timestamp_valid":          ev.timestamp_valid,
+        "freshness_status":         getattr(ev, "freshness_status", "FRESH") or "FRESH",
+        "vision_objects_detected":  ev.vision_objects_detected,
+        "vision_agreement_score":   ev.vision_agreement_score,
+        "semantic_match_status":    getattr(ev, "semantic_match_status", "MATCH") or "MATCH",
+        "semantic_confidence":      getattr(ev, "semantic_confidence", 0.0) or 0.0,
+        "image_category":           getattr(ev, "image_category", None),
+        "is_reused_image":          getattr(ev, "is_reused_image", False) or False,
+        "reused_complaint_id":      getattr(ev, "reused_complaint_id", None),
+        "quality_check":            getattr(ev, "quality_check", None),
+        "gate_reasons":             getattr(ev, "gate_reasons", None),
+        "verification_details":     ev.verification_details,
+    }
 
 
 # ─────────────────────────────────────────────────────────────────────────────

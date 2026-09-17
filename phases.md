@@ -230,53 +230,97 @@ flowchart TD
 
 ---
 
-### Phase 8: Computer Vision Validation (YOLOv8)
+### Phase 8: Structured Computer Vision & Image Quality Validation (YOLOv8 & OpenCV)
 
 #### Flowchart
 ```mermaid
 flowchart TD
-    Img["Uploaded Evidence Image"] --> YOLO["Ultralytics YOLOv8n\nNeural Network"]
-    YOLO --> Detect["Object Detection & Bounding Boxes"]
-    Detect --> Classes["Identify Civic Hazards\n(potholes, garbage piles, broken cables)"]
-    Classes --> Metrics["Compute Vision Confidence Score &\nDetected Object Labels List"]
+    Img["Uploaded Evidence Image"] --> Pre["OpenCV Quality Evaluation\n(Blur, Luminance, Resolution)"]
+    Pre -->|Laplacian var < 25.0| FlagBlur["Flag BLURRY"]
+    Pre -->|Brightness < 25 or > 245| FlagExp["Flag EXPOSURE ISSUE"]
+    Pre -->|Pass| PassQ["Quality: PASS"]
+    
+    Img --> YOLO["Ultralytics YOLOv8n\nNeural Network"]
+    YOLO --> Detect["Object Detection & Bounding Boxes\n[x1, y1, x2, y2] + Confidences"]
+    Detect --> Classes["Identify Civic Hazards\n(potholes, garbage piles, broken cables, poles)"]
+    
+    Img --> EXIF["PIL / piexif Metadata Parser"]
+    EXIF --> EXIFData["Extract EXIF GPS (DMS)\n& Capture Timestamp (UTC)"]
+    
+    Classes --> Payload["Phase 8 Image Analysis Payload\n(detected_objects, bounding_boxes, quality_check, EXIF)"]
+    PassQ --> Payload
+    FlagBlur --> Payload
+    FlagExp --> Payload
+    EXIFData --> Payload
 ```
 
 #### How It Works (Short Description)
 * Ingests citizen-uploaded photos and runs real-time object detection using a lightweight YOLOv8 network (`yolov8n.pt`).
-* Detects physical municipal anomalies (garbage dumps, potholes, wire hazards, street furniture).
-* Returns detected object categories, bounding box coordinates, and visual confidence metrics for cross-verification.
-* **Key Files**: `backend/app/services/vision.py`, `yolov8n.pt`.
+* Extracts structured detection payloads including categorized object classes, bounding boxes (`[x1, y1, x2, y2]`), and per-class confidence scores.
+* Executes automated **OpenCV image quality diagnostics**:
+  1. **Blurriness**: Evaluates Laplacian variance ($\text{var} < 25.0 \implies \text{BLURRY}$).
+  2. **Exposure / Contrast**: Flags underexposed ($< 25$) or overexposed ($> 245$) whiteout images.
+  3. **Resolution**: Enforces minimum dimensional sanity ($100 \times 100\text{ px}$).
+* Uses PIL and `piexif` to extract embedded GPS coordinates and capture timestamps across standard EXIF and modern IFD sub-tables.
+* **Key Files**: `backend/app/services/evidence.py`, `yolov8n.pt`.
 
 ---
 
-### Phase 9: Geo-Tag & Multimodal Evidence Trust Scoring Engine
+### Phase 9: Hard-Gate Multimodal Evidence Verification & Trust Scoring Engine
 
 #### Flowchart
 ```mermaid
 flowchart TD
-    GPS["Live Device GPS"] --> Check1["1. GPS Delta Evaluation\n(Distance within 500m)"]
-    EXIF["Photo EXIF GPS"] --> Check1
-    Time["Upload Timestamp"] --> Check2["2. Timestamp Recency\n& Plausibility Check"]
-    Stamp["Photo Creation Date"] --> Check2
-    TextCat["NLP Predicted Category"] --> Check3["3. Semantic-Vision\nAgreement Scoring"]
-    YOLOObj["YOLO Detected Objects"] --> Check3
-    
-    Check1 -->|Weight: 35%| Calc["Composite Trust Formula"]
-    Check2 -->|Weight: 20%| Calc
-    Check3 -->|Weight: 45%| Calc
-    
-    Calc --> Score["Trust Score: 0 - 100%\n(High / Medium / Low / Suspicious)"]
-    Score --> Expl["Human-Readable Audit Explanation Log"]
+    subgraph Gate1 ["GATE 1: GEOLOCATION VALIDATION"]
+        LiveGPS["Live Device GPS\n(± Accuracy Radius)"] <--> EXIFGPS["Photo EXIF GPS"]
+        LiveGPS -->|Haversine <= 500m| GeoMatch["MATCH (+35 pts)"]
+        LiveGPS -->|Haversine >= 5000m| GeoCritical["SEVERE MISMATCH\n(SUSPICIOUS)"]
+        LiveGPS -->|No EXIF GPS| GeoMissing["EXIF_MISSING\n(Partial Credit: +25 pts)"]
+    end
+
+    subgraph Gate2 ["GATE 2: TIMESTAMP FRESHNESS"]
+        ServerTime["Server Receipt (UTC)"] <--> PhotoTime["Photo EXIF Timestamp"]
+        ServerTime -->|Age <= 72h| Fresh["FRESH (+20 pts)"]
+        ServerTime -->|Age > 72h| Stale["STALE\n(MANUAL_REVIEW)"]
+        ServerTime -->|Future > 10m| Future["FUTURE ANOMALY\n(MANUAL_REVIEW)"]
+    end
+
+    subgraph Gate3 ["GATE 3: SEMANTIC ALIGNMENT"]
+        NLPDesc["Complaint Category & Description"] <--> YOLOFeat["YOLO Objects & Image Context"]
+        NLPDesc -->|Category Matches Visuals| SemMatch["MATCH (+45 pts)"]
+        NLPDesc -->|Cross-Category Mismatch\ne.g. Pothole vs Garbage| SemMismatch["HARD MISMATCH\n(REJECTED)"]
+    end
+
+    subgraph Gate4 ["GATE 4: REUSED IMAGE DETECTION"]
+        CurImg["Current Photo dHash"] <--> PrevImgs["Database Complaint Images"]
+        CurImg -->|Hamming Distance <= 4| Reused["REUSED IMAGE\n(SUSPICIOUS)"]
+    end
+
+    Gate1 --> DecisionEngine{"Hard-Gate Decision Engine"}
+    Gate2 --> DecisionEngine
+    Gate3 --> DecisionEngine
+    Gate4 --> DecisionEngine
+
+    DecisionEngine -->|All Gates Pass| DecVerified["VERIFIED"]
+    DecisionEngine -->|Minor Quality / Missing EXIF| DecPartial["PARTIALLY_VERIFIED"]
+    DecisionEngine -->|Stale / Future / Borderline| DecReview["MANUAL_REVIEW"]
+    DecisionEngine -->|Severe Distance / Reused Photo| DecSuspicious["SUSPICIOUS"]
+    DecisionEngine -->|Semantic Mismatch / Indoor Device| DecRejected["REJECTED"]
+
+    DecisionEngine --> CalcScore["Weighted Trust Score (0 - 100%)\nGPS (35%) + Time (20%) + Semantic (45%)"]
+    CalcScore --> Audit["GET /api/v1/complaints/{id}/evidence\nAudit Trail & Officer Dashboard"]
 ```
 
 #### How It Works (Short Description)
-* Cross-evaluates multiple evidence sources to prevent fraudulent, stale, or spoofed submissions.
-* Computes an explainable composite **Trust Score (0–100%)**:
-  1. **GPS Delta (35% weight)**: Compares live device GPS coordinates with photo EXIF metadata (&le; 500m = match).
-  2. **Timestamp Sanity (20% weight)**: Ensures photo was taken recently and not recycled from old archives.
-  3. **Vision Alignment (45% weight)**: Verifies whether YOLOv8 visual objects match the NLP text category.
-* Categorizes trust into `High`, `Medium`, `Low`, or `Suspicious` with detailed audit remarks.
-* **Key Files**: `backend/app/services/evidence.py`.
+* Enforces server-side authority with **4 Hard Verification Gates** to prevent spoofed, fraudulent, or recycled submissions:
+  1. **Gate 1 (Geospatial Cross-Validation)**: Calculates Haversine distance between reported live device GPS and photo EXIF coordinates. Distance $\le 500\text{m}$ confirms `MATCH`. Distance $\ge 5000\text{m}$ triggers `SUSPICIOUS`. Missing EXIF gracefully falls back to `EXIF_MISSING`.
+  2. **Gate 2 (Timestamp Freshness)**: Ensures photo was taken within 72 hours (`FRESH`). Photos $> 72\text{h}$ are flagged `STALE`, and future timestamps ($> 10\text{m}$) are flagged `FUTURE` $\to$ `MANUAL_REVIEW`.
+  3. **Gate 3 (Semantic Agreement)**: Cross-checks complaint text and category against image features using `all-MiniLM-L6-v2` SentenceTransformers and YOLO indicators. Strict negative filters detect cross-category mismatches (e.g. Pothole complaint with Garbage photo). **Critical rule: Semantic mismatches are barred from ever receiving `VERIFIED` status and are routed to `REJECTED`**.
+  4. **Gate 4 (Reused Image Detection)**: Computes a 64-bit difference perceptual hash (`dHash`). Bitwise Hamming distance $\le 4$ flags duplicate or re-submitted images across complaints, setting `is_reused_image = True` $\to$ `SUSPICIOUS`.
+* **Decision States**: `VERIFIED`, `PARTIALLY_VERIFIED`, `MANUAL_REVIEW`, `SUSPICIOUS`, `REJECTED`.
+* **Composite Trust Score (0–100%)**: Weighted composition: GPS ($35\%$), Timestamp ($20\%$), Semantic Vision ($45\%$). Clamped to $\le 24\%$ if `REJECTED` and $\le 35\%$ if `SUSPICIOUS`.
+* **Audit API Endpoint**: `GET /api/v1/complaints/{id}/evidence` returns complete gate telemetry and explainable audit logs.
+* **Key Files**: `backend/app/services/evidence.py`, `backend/test_evidence_gates.py`.
 
 ---
 

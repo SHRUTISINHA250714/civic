@@ -338,6 +338,25 @@ export default function OfficerDashboard() {
                       </p>
                     </div>
                   )}
+                  {selectedComplaint.evidence_check && (
+                    <div className="bg-slate-50 dark:bg-slate-850 p-2.5 rounded-lg border border-slate-100 dark:border-slate-800/40">
+                      <div className="flex items-center justify-between mb-1">
+                        <span className="text-[10px] font-bold text-slate-400 uppercase">Evidence Audit</span>
+                        <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
+                          selectedComplaint.evidence_check.verification_decision === 'VERIFIED'
+                            ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-300'
+                            : selectedComplaint.evidence_check.verification_decision === 'REJECTED'
+                            ? 'bg-rose-100 text-rose-800 dark:bg-rose-950/40 dark:text-rose-300'
+                            : 'bg-amber-100 text-amber-800 dark:bg-amber-950/40 dark:text-amber-300'
+                        }`}>
+                          {selectedComplaint.evidence_check.verification_decision} ({Math.round(selectedComplaint.evidence_check.trust_score)}%)
+                        </span>
+                      </div>
+                      <p className="text-[10px] text-slate-500 dark:text-slate-400">
+                        {selectedComplaint.evidence_check.verification_details}
+                      </p>
+                    </div>
+                  )}
                 </div>
 
                 {/* Media columns */}

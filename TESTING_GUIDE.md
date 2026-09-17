@@ -13,7 +13,8 @@
 7. [Test Track 5: Multi-Department Testing Scenarios](#7-test-track-5-multi-department-testing-scenarios)
 8. [Test Track 6: Automated End-to-End Terminal Suite](#8-test-track-6-automated-end-to-end-terminal-suite)
 9. [Test Track 7: Interactive Swagger REST API Testing](#9-test-track-7-interactive-swagger-rest-api-testing)
-10. [Edge Cases & Security Validation](#10-edge-cases--security-validation)
+10. [Test Track 8: Automated Hard-Gate Evidence Verification Suite](#10-test-track-8-automated-hard-gate-evidence-verification-suite)
+11. [Edge Cases & Security Validation](#11-edge-cases--security-validation)
 
 ---
 
@@ -66,7 +67,9 @@ All accounts are pre-seeded in the database and ready for immediate login:
 * ✅ **Zero-Drop Translation**: The backend translates the Kannada text into English while storing the original Kannada text.
 * ✅ **AI Classification**: The AI classifies the issue as `Pothole` or `Garbage` and assigns it to **BBMP**.
 * ✅ **AI Priority Engine**: Computes priority (`Medium` or `High`) and sets an SLA deadline.
-* ✅ **Evidence Trust Card**: Displays a **Composite Trust Score (0–100%)** validating the GPS coordinate plausibility, submission timestamp, and YOLOv8 image-text agreement.
+* ✅ **Verification Gate Badge**: Displays the **Hard-Gate Decision Badge** (`VERIFIED`, `PARTIALLY_VERIFIED`, `MANUAL_REVIEW`, `SUSPICIOUS`, or `REJECTED`).
+* ✅ **Evidence Trust Card**: Displays a **Composite Trust Score (0–100%)** broken down into GPS proximity (35%), timestamp recency (20%), and YOLOv8 semantic vision agreement (45%).
+* ✅ **High-Accuracy GPS**: Client geolocation accuracy radius (`pos.coords.accuracy`) is sent to the backend and factored into Gate 1 location checks.
 * ✅ **Tracking Timeline**: Complaint appears in the Citizen's active list under status **Registered**.
 
 ---
@@ -85,13 +88,19 @@ All accounts are pre-seeded in the database and ready for immediate login:
 
 ## 4. Test Track 2: Field Officer Operations & Resolution Proof
 
-### Scenario 2.1: Officer Ticket Acceptance and Field Work
+### Scenario 2.1: Officer Ticket Acceptance, Evidence Audit & Field Work
 1. Log out (or open an Incognito browser window) and navigate to **`http://localhost:3000/login`**.
 2. Sign in as the **BBMP Officer**:
    * **Email**: `officer.bbmp@civicai.gov.in`
    * **Password**: `officerpassword`
 3. You will be redirected to the **Officer Dashboard** (`/officer/dashboard`).
 4. Locate the newly filed complaint in your assigned queue:
+   * **Inspect Evidence Audit Diagnostic Panel**: Click the evidence section to view:
+     - **OpenCV Diagnostics**: Laplacian blur variance (threshold $\ge 25.0$), exposure brightness ($25 \le L \le 245$), and minimum resolution ($100 \times 100\text{px}$).
+     - **Gate 1 (GPS)**: Client coordinates vs. EXIF coordinates distance delta ($\le 500\text{m}$).
+     - **Gate 2 (Timestamp)**: Capture recency ($\le 72\text{h}$) and future clock skew rejection ($> 10\text{m}$).
+     - **Gate 3 (Semantic)**: YOLOv8 detected objects and NLP cross-modal cosine similarity score against complaint text.
+     - **Gate 4 (Reused dHash)**: 64-bit perceptual image hash verifying no duplicate recycled photo abuse across past tickets.
    * Click **"Accept"** &rarr; Verify status changes to **Accepted** and SLA timer starts counting.
    * Click **"Start Work"** &rarr; Verify status changes to **In Progress**.
 
@@ -165,7 +174,7 @@ All accounts are pre-seeded in the database and ready for immediate login:
 * **Executive KPI Cards**:
   * Total City Complaints, Pending vs. Closed Tickets, Reopened Ratio, and Overall SLA Compliance (%).
 * **Department Workload Cards**:
-  * Real-time active ticket distribution across *BBMP, BWSSB, BESCOM, BMRCL, BDA, and Traffic Police*.
+  * Real-time active ticket distribution across *BBMP, BESCOM, BWSSB, and BSWML*.
 * **Interactive GIS Map**:
   * Leaflet map displaying active complaints across Bengaluru with color-coded status pins and hotspot density rings.
 * **Manual SLA Check**:
@@ -258,20 +267,78 @@ To run the complete automated integration test suite in your terminal:
    * Click **Authorize**.
 3. Test key endpoints directly:
    * `POST /api/v1/complaints/check-duplicate`: Submit coordinates to test proximity scoring.
+   * `GET /api/v1/complaints/{id}/evidence`: Inspect the detailed hard-gate verification diagnostic report, OpenCV quality metrics, gate states, and perceptual dHash.
    * `POST /api/v1/predictive/estimate`: Submit `{ "category": "Pothole", "ward": "Bommanahalli", "priority": "High" }` to inspect raw JSON predictions.
    * `GET /api/v1/predictive/overview`: Inspect live model metrics and telemetry.
    * `GET /api/v1/predictive/forecast`: View day-by-day projected grievance volumes.
 
 ---
 
-## 10. Edge Cases & Security Validation
+## 10. Test Track 8: Automated Hard-Gate Evidence Verification Suite
+
+To run the dedicated 11-scenario evidence verification test suite:
+
+```powershell
+# In workspace root (c:\Users\Lenovo\Desktop\CIVIC)
+python -m backend.test_evidence_gates
+```
+
+### The 11 Verification Scenarios Executed:
+```
+================================================================================
+TEST SUITE: Phase 8 & 9 Hard-Gate Evidence Verification & OpenCV Diagnostics
+================================================================================
+
+[Scenario 1] Genuine Field Image with Matching EXIF GPS & Timestamp...
+   -> Decision: VERIFIED | Trust Score: 95.0% | Status: PASSED (Match: True)
+
+[Scenario 2] GPS Mismatch Gate (EXIF >5000m away from complaint pin)...
+   -> Decision: SUSPICIOUS | Trust Score: 25.0% | Status: PASSED (Match: True)
+
+[Scenario 3] Stale Timestamp Gate (EXIF captured 5 days ago)...
+   -> Decision: MANUAL_REVIEW | Trust Score: 40.0% | Status: PASSED (Match: True)
+
+[Scenario 4] Future Timestamp Anomaly (EXIF 2 hours in future)...
+   -> Decision: MANUAL_REVIEW | Trust Score: 40.0% | Status: PASSED (Match: True)
+
+[Scenario 5] Semantic Category Mismatch (Pothole text vs. Laptop image)...
+   -> Decision: SUSPICIOUS | Trust Score: 20.0% | Status: PASSED (Match: True)
+
+[Scenario 6] Reused Image / Recycled Evidence (Duplicate 64-bit dHash)...
+   -> Decision: SUSPICIOUS | Trust Score: 30.0% | Status: PASSED (Match: True)
+
+[Scenario 7] Stripped EXIF / Social Media Upload (Missing EXIF headers)...
+   -> Decision: PARTIALLY_VERIFIED | Trust Score: 60.0% | Status: PASSED (Match: True)
+
+[Scenario 8] Blurry Low-Quality Photo (OpenCV Laplacian Var < 25.0)...
+   -> Decision: MANUAL_REVIEW | Quality: BLURRY | Status: PASSED (Match: True)
+
+[Scenario 9] Underexposed / Dark Photo (Mean Luminance < 25)...
+   -> Decision: MANUAL_REVIEW | Quality: UNDEREXPOSED | Status: PASSED (Match: True)
+
+[Scenario 10] Overexposed / Washed-out Photo (Mean Luminance > 245)...
+   -> Decision: MANUAL_REVIEW | Quality: OVEREXPOSED | Status: PASSED (Match: True)
+
+[Scenario 11] Sub-Resolution Image (Dimensions < 100x100 pixels)...
+   -> Decision: MANUAL_REVIEW | Quality: LOW_RESOLUTION | Status: PASSED (Match: True)
+
+================================================================================
+SUMMARY: 11/11 Passed (100.0%) | Failures: 0
+================================================================================
+```
+
+---
+
+## 11. Edge Cases & Security Validation
 
 | Security / Integrity Check | Test Action | Expected Safe Result |
 |---|---|---|
 | **Cross-Officer Tampering** | Log in as BWSSB Officer and try to transition a BBMP complaint | ❌ Returns `HTTP 403 Forbidden: Officer is not assigned to this complaint` |
 | **Citizen Status Bypass** | Log in as Citizen and try to force status to `Resolved` | ❌ Returns `HTTP 400 Bad Request: Citizens can only close or reopen complaints` |
 | **Duplicate Flooding** | Submit two identical complaints within 50m of each other | ℹ️ Automatically links second complaint as duplicate and closes child ticket |
-| **Tampered / Indoor Image** | Submit a blank or indoor screen photo | ℹ️ Multimodal Trust Score drops to `Low / Suspicious` and flags ticket for officer inspection |
+| **Tampered / Recycled Image** | Submit a recycled photo from an older complaint or mismatched EXIF GPS | ℹ️ Hard Gate flags `is_reused_image = True` or `gps_match_status = SUSPICIOUS` $\to$ Decision: `SUSPICIOUS` |
+| **Semantic Mismatch** | Submit a complaint for "pothole" with a photo of a dog or office computer | ⚠️ Gate 3 fails $\to$ Decision strictly barred from `VERIFIED`, capped at `SUSPICIOUS` |
+| **Blurry / Dark Image** | Upload an unreadable, pitch-dark, or blurry photo | ℹ️ OpenCV triggers `MANUAL_REVIEW` requiring officer physical inspection |
 | **SLA Deadline Breach** | Wait for SLA duration to exceed policy limit | ⚠️ System automatically marks ticket `SLA Status: Breached` and flags `is_escalated = True` |
 
 ---
@@ -279,10 +346,13 @@ To run the complete automated integration test suite in your terminal:
 ## 🏁 Testing Summary Checklist
 
 - [ ] Citizen can log in and submit complaints in Kannada and English.
-- [ ] AI automatically categorizes issue and routes to the correct Karnataka agency.
-- [ ] Multimodal Evidence Trust Score evaluates GPS, timestamp, and YOLO visual data.
-- [ ] Field officers can accept, progress, and submit photo resolution proof.
+- [ ] AI automatically categorizes issue and routes to the correct Karnataka agency (**BBMP, BESCOM, BWSSB, BSWML**).
+- [ ] OpenCV verifies image quality (Laplacian blur variance, luminance, resolution).
+- [ ] Multimodal Hard Gates evaluate EXIF GPS proximity, timestamp recency, semantic matching, and perceptual dHash reuse.
+- [ ] Evidence Trust Score accurately displays badge (`VERIFIED`, `PARTIALLY_VERIFIED`, `MANUAL_REVIEW`, `SUSPICIOUS`, `REJECTED`).
+- [ ] Field officers can inspect evidence audit diagnostics, accept, progress, and submit photo resolution proof.
 - [ ] Citizen verification allows both 1-click approval (5-star rating) and reopen feedback loops.
 - [ ] Admin dashboard displays GIS hotspot clustering and SLA compliance dials.
 - [ ] Phase 16 ML early warning calculates SLA breach probability and 14-day grievance forecasts.
-- [ ] Automated integration test suite (`test_e2e.py`) executes 100% cleanly.
+- [ ] Hard-Gate Evidence test suite (`python -m backend.test_evidence_gates`) executes 11/11 tests cleanly.
+- [ ] Master integration test suite (`test_e2e.py`) executes 13/13 steps cleanly.
