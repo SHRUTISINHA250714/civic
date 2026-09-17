@@ -1,84 +1,100 @@
-ī# CivicAI Karnataka – Setup & Running Guide
+# CivicAI Karnataka – Smart Civic Grievance Redressal System
 
-This project consists of an AI-powered FastAPI backend and a Next.js frontend. To run this project, you need to set up and run both components.
-
-## 1. Prerequisites
-* **PostgreSQL**: Installed and running on your local machine.
-* **Python**: Python 3.8+ installed.
-* **Node.js**: Node.js (v18+) and `npm` installed.
+An AI-powered multimodal civic grievance management platform built specifically for the State of Karnataka (Bengaluru). The system enables citizens to report complaints via text, native scripts (Kannada / Hinglish / English), voice, and geotagged imagery. It uses computer vision (YOLOv11), NLP multilingual embeddings, geospatial duplicate detection, and dynamic routing to assign tickets to the correct state civic authority and track resolution through SLA enforcement.
 
 ---
 
-## 2. Setup and Run the Backend
+## 🏛️ Connected Civic Authorities (4 Departments)
 
-### Step A: Setup the Database
-1. Open your PostgreSQL console or client (e.g., pgAdmin, psql, or DBeaver).
-2. Create a new database named `civic_karnataka`:
+The platform is wired to four core municipal and utility agencies:
+
+| Authority | Code | Domain & Scope |
+|---|---|---|
+| **Bruhat Bengaluru Mahanagara Palike** | `BBMP` | Roads, potholes, pavements, streetlighting, stormwater drains |
+| **Bangalore Electricity Supply Company** | `BESCOM` | Power outages, dangerous exposed wiring, sparking transformers |
+| **Bangalore Water Supply and Sewerage Board** | `BWSSB` | Broken water mains, water leakage, sewage overflow, contaminated supply |
+| **Bengaluru Solid Waste Management Limited** | `BSWML` | Garbage blackspots, overflowing bins, uncollected waste, illegal waste burning |
+
+---
+
+## 🚀 Key System Features
+
+* **Multilingual NLP Pipeline**: Automatic detection of Kannada, Kanglish, Hinglish, and English with automated English translation and zero-shot grievance classification.
+* **YOLOv11 Vision Verification**: Real-time validation of complaint images to detect potholes, garbage, water leaks, and street hazards before acceptance.
+* **Geospatial Duplicate Detection**: 100m radius duplicate scan with cosine text similarity to group duplicate complaints and prevent ticket flooding.
+* **Dynamic SLA Enforcement**: Priority-driven timers (Low: 72h, Medium: 48h, High: 24h, Urgent: 12h) with auto-escalation upon breach.
+* **Citizen Proof Verification**: Citizens must inspect officer resolution proof photos to approve closure or trigger automated re-dispatch.
+* **Phase 16 Predictive Analytics**: Random Forest machine learning models trained on historical Janahita datasets for 14-day grievance intake forecasting and SLA breach risk scoring.
+
+---
+
+## 🔑 Default Test Accounts & Credentials
+
+All default test accounts are seeded via `python -m backend.app.seed`:
+
+| Role | Name | Email | Password | Primary Dashboard |
+|---|---|---|---|---|
+| 👑 **System Administrator** | Karnataka Admin | `admin@civicai.gov.in` | `adminpassword` | [`/admin/dashboard`](http://localhost:3000/admin/dashboard) |
+| 👤 **Citizen User** | Rahul Sharma | `citizen@gmail.com` | `citizenpassword` | [`/citizen/dashboard`](http://localhost:3000/citizen/dashboard) |
+| 🚧 **BBMP Officer** | Rajesh Kumar | `officer.bbmp@civicai.gov.in` | `officerpassword` | [`/officer/dashboard`](http://localhost:3000/officer/dashboard) |
+| ⚡ **BESCOM Officer** | Manjunath Swamy | `officer.bescom@civicai.gov.in` | `officerpassword` | [`/officer/dashboard`](http://localhost:3000/officer/dashboard) |
+| 🚰 **BWSSB Officer** | Anil Gowda | `officer.bwssb@civicai.gov.in` | `officerpassword` | [`/officer/dashboard`](http://localhost:3000/officer/dashboard) |
+| 🗑️ **BSWML Officer** | Sunitha Murthy | `officer.bswml@civicai.gov.in` | `officerpassword` | [`/officer/dashboard`](http://localhost:3000/officer/dashboard) |
+
+---
+
+## 🛠️ Prerequisites
+
+* **PostgreSQL**: Installed and running on `localhost:5432`.
+* **Python**: Version 3.8+ (recommended 3.10+).
+* **Node.js**: Node.js (v18+) and `npm`.
+
+---
+
+## 💻 Quick Start Guide
+
+### 1. Backend Setup (FastAPI)
+
+1. Open your PostgreSQL client and create the database:
    ```sql
    CREATE DATABASE civic_karnataka;
    ```
-3. **Configure Database Connection**: The default credentials are set in [config.py](file:///c:/Users/Lenovo/Desktop/CIVIC/backend/app/core/config.py):
-   ```
-   postgresql://postgres:postgres@localhost:5432/civic_karnataka
-   ```
-   If your PostgreSQL username, password, host, or port are different, create a `.env` file in the root workspace directory and specify your `DATABASE_URL`:
-   ```env
-   DATABASE_URL=postgresql://<username>:<password>@<host>:<port>/civic_karnataka
-   ```
+2. Open a terminal in the root project folder:
+   ```powershell
+   # Create and activate virtual environment (Windows PowerShell)
+   python -m venv venv
+   .\venv\Scripts\activate
 
-### Step B: Install Dependencies & Run Database Seed
-1. Open a terminal in the root workspace directory (`c:/Users/Lenovo/Desktop/CIVIC`).
-2. Create and activate a Python virtual environment:
-   * **Windows PowerShell**:
-     ```powershell
-     python -m venv venv
-     .\venv\Scripts\activate
-     ```
-   * **Windows Command Prompt**:
-     ```cmd
-     python -m venv venv
-     venv\Scripts\activate
-     ```
-   * **macOS/Linux**:
-     ```bash
-     python3 -m venv venv
-     source venv/bin/activate
-     ```
-3. Install the required Python packages defined in [requirements.txt](file:///c:/Users/Lenovo/Desktop/CIVIC/backend/requirements.txt):
-   ```bash
+   # Install dependencies
    pip install -r backend/requirements.txt
-   ```
-4. Run the seed script in [seed.py](file:///c:/Users/Lenovo/Desktop/CIVIC/backend/app/seed.py) to create database tables and insert initial mock data (roles, departments, complaint categories, and test user accounts):
-   ```bash
-   python -m backend.app.seed
-   ```
 
-### Step C: Start the Backend Server
-1. Start the FastAPI backend server using Uvicorn:
-   ```bash
+   # Seed database with the 4 Karnataka departments, wards, and officers
+   python -m backend.app.seed
+
+   # Start FastAPI dev server
    uvicorn backend.app.main:app --reload
    ```
-2. The backend API will be available at **`http://127.0.0.1:8000`**.
-3. You can access the interactive Swagger documentation at **`http://127.0.0.1:8000/docs`**.
+3. Backend API runs at **`http://127.0.0.1:8000`**.
+4. Interactive Swagger API Docs: **`http://127.0.0.1:8000/docs`**.
 
----
+### 2. Frontend Setup (Next.js 16 + Turbopack)
 
-## 3. Setup and Run the Frontend
-
-1. Open a second terminal window.
-2. Navigate into the `frontend` folder:
-   ```bash
+1. Open a second terminal and navigate to `frontend`:
+   ```powershell
    cd frontend
-   ```
-3. Install the Node modules defined in [package.json](file:///c:/Users/Lenovo/Desktop/CIVIC/frontend/package.json):
-   ```bash
    npm install
-   ```
-4. Start the Next.js development server:
-   ```bash
    npm run dev
    ```
-5. The frontend will be available in your browser at **`http://localhost:3000`**.
+2. Frontend portal runs at **`http://localhost:3000`**.
 
 ---
 
+## 🧪 Testing & Verification
+
+* **Interactive Manual Testing Guide**: Full 5-track walkthrough in [TESTING_GUIDE.md](file:///c:/Users/Lenovo/Desktop/CIVIC/TESTING_GUIDE.md).
+* **Complete System Documentation & Architecture**: [PROJECT_DOCUMENTATION.md](file:///c:/Users/Lenovo/Desktop/CIVIC/PROJECT_DOCUMENTATION.md).
+* **17-Phase Implementation Blueprint**: [phases.md](file:///c:/Users/Lenovo/Desktop/CIVIC/phases.md).
+* **Automated End-to-End Test Suite**:
+  ```powershell
+  python backend/test_e2e.py
+  ```

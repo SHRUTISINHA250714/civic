@@ -206,10 +206,8 @@ class PredictiveIntelligenceService:
                     dept = "BWSSB"
                 elif cat_norm in ["Streetlight", "Power Outage"]:
                     dept = "BESCOM"
-                elif cat_norm in ["Traffic Signal Fault"]:
-                    dept = "Traffic Police"
-                elif cat_norm in ["Illegal Construction"]:
-                    dept = "BDA"
+                elif cat_norm in ["Garbage", "Illegal Dumping"]:
+                    dept = "BSWML"
 
                 records.append({
                     "category": cat_norm,
@@ -269,7 +267,7 @@ class PredictiveIntelligenceService:
         all_cats = list(set([r["category"] for r in records] + ["Garbage", "Pothole", "Streetlight", "Water Leakage", "Sewage Overflow", "Tree Fall", "Road Damage", "Others"]))
         all_wards = list(set([r["ward"] for r in records] + ["Central", "Koramangala", "Indiranagar", "Whitefield", "Jayanagar", "Banaswadi"]))
         all_zones = list(set([r["zone"] for r in records] + list(BENGALURU_ZONES.keys())))
-        all_depts = ["BBMP", "BWSSB", "BESCOM", "Traffic Police", "BMRCL", "BDA"]
+        all_depts = ["BBMP", "BESCOM", "BWSSB", "BSWML"]
         all_priorities = ["Low", "Medium", "High", "Critical"]
 
         self.cat_encoder.fit(all_cats)

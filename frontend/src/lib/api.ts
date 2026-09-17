@@ -102,6 +102,19 @@ export const api = {
   },
 
   // Complaints APIs
+  getDepartmentsAndCategories: async () => {
+    return apiFetch("/complaints/departments-categories");
+  },
+
+  previewAI: async (description: string) => {
+    const fd = new FormData();
+    fd.append("description", description);
+    return apiFetch("/complaints/preview-ai", {
+      method: "POST",
+      body: fd
+    });
+  },
+
   checkDuplicate: async (formData: FormData) => {
     return apiFetch("/complaints/check-duplicate", {
       method: "POST",

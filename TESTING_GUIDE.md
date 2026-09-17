@@ -38,11 +38,9 @@ All accounts are pre-seeded in the database and ready for immediate login:
 | 👑 **System Administrator** | Karnataka Civic Admin | `admin@civicai.gov.in` | `adminpassword` | [`/admin/dashboard`](http://localhost:3000/admin/dashboard) |
 | 🧑‍💼 **Citizen User** | Siddaramaiah K | `citizen@gmail.com` | `citizenpassword` | [`/citizen/dashboard`](http://localhost:3000/citizen/dashboard) |
 | 🚧 **BBMP Officer** | Rajesh Kumar (BBMP) | `officer.bbmp@civicai.gov.in` | `officerpassword` | [`/officer/dashboard`](http://localhost:3000/officer/dashboard) |
-| 🚰 **BWSSB Officer** | Anil Gowda (BWSSB) | `officer.bwssb@civicai.gov.in` | `officerpassword` | [`/officer/dashboard`](http://localhost:3000/officer/dashboard) |
 | ⚡ **BESCOM Officer** | Manjunath Swamy (BESCOM) | `officer.bescom@civicai.gov.in` | `officerpassword` | [`/officer/dashboard`](http://localhost:3000/officer/dashboard) |
-| 🚦 **Traffic Police Officer**| Inspector Girish (BTP) | `officer.traffic@civicai.gov.in` | `officerpassword` | [`/officer/dashboard`](http://localhost:3000/officer/dashboard) |
-| 🚇 **BMRCL Officer** | Suresh Nair (BMRCL) | `officer.bmrcl@civicai.gov.in` | `officerpassword` | [`/officer/dashboard`](http://localhost:3000/officer/dashboard) |
-| 🏗️ **BDA Officer** | Kavitha Reddy (BDA) | `officer.bda@civicai.gov.in` | `officerpassword` | [`/officer/dashboard`](http://localhost:3000/officer/dashboard) |
+| 🚰 **BWSSB Officer** | Anil Gowda (BWSSB) | `officer.bwssb@civicai.gov.in` | `officerpassword` | [`/officer/dashboard`](http://localhost:3000/officer/dashboard) |
+| 🗑️ **BSWML Officer** | Sunitha Murthy (BSWML) | `officer.bswml@civicai.gov.in` | `officerpassword` | [`/officer/dashboard`](http://localhost:3000/officer/dashboard) |
 
 ---
 
@@ -212,12 +210,12 @@ Test how different issue types route to different civic agencies:
 
 | Test Case | Sample Description Text | Expected Department | Assigned Officer Email |
 |---|---|---|---|
-| **Roads & Waste** | *"Large pothole and uncollected garbage on 100ft road Indiranagar"* | **BBMP** | `officer.bbmp@civicai.gov.in` |
-| **Water Supply** | *"Main water pipe burst flooding road and low water pressure in 4th block"* | **BWSSB** | `officer.bwssb@civicai.gov.in` |
-| **Electricity** | *"High voltage electric wire snapped and sparking on transformer pole"* | **BESCOM** | `officer.bescom@civicai.gov.in` |
-| **Traffic** | *"Traffic signal junction stuck on red causing 2km bottleneck jam"* | **Traffic Police** | `officer.traffic@civicai.gov.in` |
-| **Metro Transit**| *"Escalator broken and water leaking onto track at Indiranagar Metro Station"* | **BMRCL** | `officer.bmrcl@civicai.gov.in` |
-| **Encroachment** | *"Illegal construction and layout footpath encroachment blocking stormwater drain"* | **BDA** | `officer.bda@civicai.gov.in` |
+| **Roads & Potholes** | *"Large pothole and broken asphalt on 100ft road Indiranagar"* | **BBMP** | `officer.bbmp@civicai.gov.in` |
+| **Street Lighting** | *"Streetlight not working and road is pitch dark"* | **BBMP** | `officer.bbmp@civicai.gov.in` |
+| **Electricity & Power** | *"High voltage electric wire snapped and transformer sparking"* | **BESCOM** | `officer.bescom@civicai.gov.in` |
+| **Water & Sewerage** | *"Main water pipe burst flooding road and sewage overflowing"* | **BWSSB** | `officer.bwssb@civicai.gov.in` |
+| **Solid Waste (Garbage)**| *"Garbage not collected by auto-tipper and massive blackspot waste pile"* | **BSWML** | `officer.bswml@civicai.gov.in` |
+| **Waste Burning** | *"Plastic and garbage burning on roadside with toxic smoke"* | **BSWML** | `officer.bswml@civicai.gov.in` |
 
 ---
 

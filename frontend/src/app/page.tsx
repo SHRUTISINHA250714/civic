@@ -26,12 +26,12 @@ export default function LandingPage() {
     setTimeout(() => {
       // Hardcoded offline prediction for Hinglish demo
       setAiResult({
-        detectedLang: 'Kannada / Hinglish',
+        detectedLang: 'Kannada / Kanglish',
         translation: 'In my ward, garbage is fully dumped and smelling bad, please clear.',
-        category: 'Garbage',
+        category: 'Solid Waste',
         confidence: 0.942,
         priority: 'High',
-        department: 'BBMP'
+        department: 'BSWML'
       });
       setIsClassifying(false);
     }, 1200);
@@ -100,7 +100,7 @@ export default function LandingPage() {
             </h1>
             
             <p className="mt-6 text-lg sm:text-xl text-slate-600 dark:text-slate-300 font-normal leading-relaxed">
-              Report civic complaints via text and photos. Our intelligent pipeline automatically translates native scripts, classifies issues, identifies duplicates, predicts urgency, and routes them directly to BBMP, BWSSB, BESCOM, or Traffic Police.
+              Report civic complaints via text, voice, and photos. Our intelligent pipeline automatically translates native scripts, classifies issues, identifies duplicates, predicts urgency, and routes them directly to BBMP, BESCOM, BWSSB, or BSWML.
             </p>
             
             <div className="mt-10 flex flex-col sm:flex-row items-center justify-center gap-4">

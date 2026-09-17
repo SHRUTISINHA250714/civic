@@ -87,16 +87,17 @@ def test_full_workflow():
     print(f"✓ Duplicate Check Response: is_duplicate={dup_data['is_duplicate']}, score={dup_data['similarity_score']}")
 
     # 5. Login as Assigned Officer
-    officer_id_to_email = {
-        1: "officer.bbmp@civicai.gov.in",
-        2: "officer.bwssb@civicai.gov.in",
-        3: "officer.bescom@civicai.gov.in",
-        4: "officer.traffic@civicai.gov.in",
-        5: "officer.bmrcl@civicai.gov.in",
-        6: "officer.bda@civicai.gov.in",
-    }
+    dept_name = complaint.get("department_name", "")
+    if "Solid Waste" in dept_name or "BSWML" in dept_name:
+        officer_email = "officer.bswml@civicai.gov.in"
+    elif "Electricity" in dept_name or "BESCOM" in dept_name:
+        officer_email = "officer.bescom@civicai.gov.in"
+    elif "Water" in dept_name or "BWSSB" in dept_name:
+        officer_email = "officer.bwssb@civicai.gov.in"
+    else:
+        officer_email = "officer.bbmp@civicai.gov.in"
+
     assigned_off_id = complaint.get("assigned_officer_id")
-    officer_email = officer_id_to_email.get(assigned_off_id, "officer.bbmp@civicai.gov.in")
     print(f"\n[Step 5] Logging in as Assigned Officer #{assigned_off_id} ({officer_email} - {complaint.get('assigned_officer_name')})...")
     off_login = requests.post(f"{BASE_URL}/auth/login", data={
         "username": officer_email,

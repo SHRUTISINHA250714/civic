@@ -50,32 +50,7 @@ export default function OfficerDashboard() {
   // Action state loader
   const [isTransitioning, setIsTransitioning] = useState(false);
 
-  // Load user session
-  useEffect(() => {
-    const userInfo = tokenStorage.getUserInfo();
-    if (!userInfo || userInfo.role !== "Officer") {
-      toast.error("Unauthorized access. Redirecting...");
-      router.push("/login");
-    } else {
-      setUser(userInfo);
-      loadDashboardData();
-    }
-  }, []);
-
-  const loadDashboardData = async () => {
-    try {
-      const statsData = await api.getDashboardStats("officer");
-      setStats(statsData);
-      
-      const complaintsData = await api.getComplaints();
-      setComplaints(complaintsData);
-      applyFilter(complaintsData, activeTab);
-    } catch (err: any) {
-      console.error(err);
-    }
-  };
-
-  const applyFilter = (data: any[], tab: string) => {
+  function applyFilter(data: any[], tab: string) {
     if (tab === 'all') {
       setFilteredComplaints(data);
     } else if (tab === 'pending') {
@@ -87,7 +62,32 @@ export default function OfficerDashboard() {
     } else if (tab === 'completed') {
       setFilteredComplaints(data.filter((c: any) => c.status === 'Resolved' || c.status === 'Closed'));
     }
-  };
+  }
+
+  async function loadDashboardData() {
+    try {
+      const statsData = await api.getDashboardStats("officer");
+      setStats(statsData);
+      
+      const complaintsData = await api.getComplaints();
+      setComplaints(complaintsData);
+      applyFilter(complaintsData, activeTab);
+    } catch (err: any) {
+      console.error(err);
+    }
+  }
+
+  // Load user session
+  useEffect(() => {
+    const userInfo = tokenStorage.getUserInfo();
+    if (!userInfo || userInfo.role !== "Officer") {
+      toast.error("Unauthorized access. Redirecting...");
+      router.push("/login");
+    } else {
+      setUser(userInfo);
+      loadDashboardData();
+    }
+  }, []);
 
   const handleTabChange = (tab: 'all' | 'pending' | 'in_progress' | 'completed') => {
     setActiveTab(tab);

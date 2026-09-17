@@ -1,5 +1,5 @@
 from backend.app.services.ai import (
-    translate_text, classify_complaint, predict_priority,
+    translate_text, classify_complaint, classify_complaint_structured, predict_priority,
     verify_image, get_detected_objects, transcribe_audio, CATEGORIES
 )
 from backend.app.services.duplicate import check_duplicate_complaint, haversine_distance
@@ -10,6 +10,7 @@ from backend.app.services.sla import compute_sla_deadline, get_sla_status, get_s
 __all__ = [
     "translate_text",
     "classify_complaint",
+    "classify_complaint_structured",
     "predict_priority",
     "verify_image",
     "get_detected_objects",

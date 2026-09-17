@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 from backend.app.core.database import get_db
 from backend.app.core.config import settings
 from backend.app.models.user import User, Officer
+from backend.app.models.department import Department
 from backend.app.models.complaint import (
     Complaint, ComplaintCategory, ComplaintImage,
     ComplaintStatusHistory, AIPrediction, DuplicateComplaintMapping,
@@ -18,7 +19,7 @@ from backend.app.schemas.complaint import (
 )
 from backend.app.routers.deps import get_current_active_user, get_current_citizen, get_current_officer
 from backend.app.services import (
-    translate_text, classify_complaint, predict_priority,
+    translate_text, classify_complaint, classify_complaint_structured, predict_priority,
     verify_image, get_detected_objects, transcribe_audio,
     check_duplicate_complaint, assign_officer_to_complaint,
     compute_evidence_trust, compute_sla_deadline, get_sla_summary
@@ -26,6 +27,110 @@ from backend.app.services import (
 from backend.app.services.duplicate import haversine_distance
 
 router = APIRouter(prefix="/complaints", tags=["Complaints"])
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# GET /complaints/departments-categories — List the 4 departments & their categories
+# ─────────────────────────────────────────────────────────────────────────────
+@router.get("/departments-categories")
+def get_departments_and_categories(db: Session = Depends(get_db)):
+    """Returns the 4 Karnataka Civic Authorities (BBMP, BESCOM, BWSSB, BSWML) and their active categories."""
+    dept_order = ["BBMP", "BESCOM", "BWSSB", "BSWML"]
+    dept_domains = {
+        "BBMP": "Roads & Civic Infrastructure (BBMP)",
+        "BESCOM": "Electricity & Power Supply (BESCOM)",
+        "BWSSB": "Water Supply & Sewerage Drainage (BWSSB)",
+        "BSWML": "Solid Waste Management & Sanitation (BSWML)",
+    }
+    
+    all_depts = db.query(Department).all()
+    # Filter to only the 4 valid departments
+    valid_depts = [d for d in all_depts if d.code in dept_domains]
+    # Sort in canonical order
+    valid_depts.sort(key=lambda d: dept_order.index(d.code) if d.code in dept_order else 99)
+    
+    result = []
+    for d in valid_depts:
+        categories = (
+            db.query(ComplaintCategory)
+            .filter(ComplaintCategory.department_id == d.id, ComplaintCategory.is_active == True)
+            .order_by(ComplaintCategory.name)
+            .all()
+        )
+        result.append({
+            "id": d.id,
+            "name": d.name,
+            "code": d.code,
+            "domain": dept_domains.get(d.code, "Civic Services"),
+            "categories": [
+                {
+                    "id": cat.id,
+                    "name": cat.name,
+                    "default_priority": cat.default_priority,
+                }
+                for cat in categories
+            ]
+        })
+    return result
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# POST /complaints/preview-ai — Real-time live AI translation & routing preview
+# ─────────────────────────────────────────────────────────────────────────────
+@router.post("/preview-ai")
+def preview_complaint_ai(
+    description: str = Form(...),
+    db: Session = Depends(get_db)
+):
+    """
+    Live AI assistance: Detects language, translates to English, predicts category,
+    priority, agency, subcategory, and evidence requirements across the 4 departments.
+    """
+    if not description or len(description.strip()) < 3:
+        return {
+            "original_text": description,
+            "translated_text": description,
+            "detected_language": "en",
+            "agency": "BBMP",
+            "category": "Roads",
+            "subcategory": "Pothole",
+            "requires_image": True,
+            "requires_gps": True,
+            "predicted_department": "BBMP",
+            "predicted_department_name": "Bruhat Bengaluru Mahanagara Palike",
+            "predicted_category_name": "Potholes & Damaged Roads",
+            "predicted_category_id": None,
+            "predicted_priority": "Medium",
+            "confidence": 0.50
+        }
+
+    translated_desc, detected_lang, _ = translate_text(description)
+    structured_ai = classify_complaint_structured(translated_desc)
+    predicted_priority, prio_conf = predict_priority(translated_desc, structured_ai["predicted_category_name"])
+
+    cat = db.query(ComplaintCategory).filter(ComplaintCategory.name == structured_ai["predicted_category_name"]).first()
+    if not cat:
+        cat = db.query(ComplaintCategory).filter(ComplaintCategory.name == "Others").first()
+
+    dept_code = structured_ai["agency"]
+    dept_name = cat.department.name if cat and cat.department else structured_ai.get("agency_full_name", "Bruhat Bengaluru Mahanagara Palike")
+
+    return {
+        "original_text": description,
+        "translated_text": translated_desc,
+        "detected_language": detected_lang,
+        "agency": structured_ai["agency"],
+        "category": structured_ai["category"],
+        "subcategory": structured_ai["subcategory"],
+        "requires_image": structured_ai["requires_image"],
+        "requires_gps": structured_ai["requires_gps"],
+        "predicted_department": dept_code,
+        "predicted_department_name": dept_name,
+        "predicted_category_name": cat.name if cat else structured_ai["predicted_category_name"],
+        "predicted_category_id": cat.id if cat else None,
+        "predicted_priority": predicted_priority,
+        "confidence": structured_ai["confidence"]
+    }
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -179,6 +284,8 @@ def raise_complaint(
     location_latitude:  float          = Form(...),
     location_longitude: float          = Form(...),
     location_address:   Optional[str]  = Form(None),
+    category_id:        Optional[int]  = Form(None),
+    department_id:      Optional[int]  = Form(None),
     duplicate_of_id:    Optional[int]  = Form(None),
     file:               Optional[UploadFile] = File(None),
     audio_file:         Optional[UploadFile] = File(None),
@@ -210,16 +317,26 @@ def raise_complaint(
     # ── 1. Translation and Language Detection ─────────────────────────────────
     translated_desc, detected_lang, trans_time = translate_text(description)
 
-    # ── 2. AI Complaint Classification ────────────────────────────────────────
+    # ── 2. Category Selection / AI Classification ─────────────────────────────
+    # Check if citizen explicitly specified a category
+    category = None
+    if category_id:
+        category = db.query(ComplaintCategory).filter(ComplaintCategory.id == category_id).first()
+
     predicted_cat_name, cat_conf = classify_complaint(translated_desc)
-    category = db.query(ComplaintCategory).filter(ComplaintCategory.name == predicted_cat_name).first()
+    
     if not category:
-        category = db.query(ComplaintCategory).filter(ComplaintCategory.name == "Others").first()
-        predicted_cat_name = "Others"
-        cat_conf = 0.50
+        category = db.query(ComplaintCategory).filter(ComplaintCategory.name == predicted_cat_name).first()
+        if not category:
+            category = db.query(ComplaintCategory).filter(ComplaintCategory.name == "Others").first()
+            predicted_cat_name = "Others"
+            cat_conf = 0.50
+    else:
+        # If user explicitly chose, keep category confidence high
+        cat_conf = 1.0
 
     # ── 3. AI Priority Prediction ─────────────────────────────────────────────
-    predicted_priority, prio_conf = predict_priority(translated_desc, predicted_cat_name)
+    predicted_priority, prio_conf = predict_priority(translated_desc, category.name)
 
     # ── 4. Duplicate Detection ────────────────────────────────────────────────
     assigned_duplicate_id = duplicate_of_id

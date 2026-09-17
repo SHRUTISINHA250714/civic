@@ -8,6 +8,14 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
+import sys
+from pathlib import Path
+
+# Ensure root workspace is in sys.path so 'backend.app...' imports work from any cwd
+ROOT_DIR = Path(__file__).resolve().parent.parent.parent
+if str(ROOT_DIR) not in sys.path:
+    sys.path.insert(0, str(ROOT_DIR))
+
 from backend.app.core.config import settings
 from backend.app.routers import auth, complaints, dashboard, officers, notifications, predictive
 

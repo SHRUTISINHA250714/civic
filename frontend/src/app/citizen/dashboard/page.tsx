@@ -9,7 +9,7 @@ import {
   Image as ImageIcon, Loader2, Info, CheckCircle2,
   Clock, AlertTriangle, MessageSquare, Globe, Navigation,
   ArrowRight, Mic, MicOff, Star, ThumbsUp, ThumbsDown,
-  Shield, TriangleAlert, RefreshCw, Volume2
+  Shield, TriangleAlert, RefreshCw, Volume2, Sparkles
 } from 'lucide-react';
 import { api, tokenStorage } from '@/lib/api';
 import { toast } from 'sonner';
@@ -112,6 +112,14 @@ export default function CitizenDashboard() {
   const [imageFile, setImageFile] = useState<File | null>(null);
   const [audioFile, setAudioFile] = useState<File | null>(null);
 
+  // Department & Category Selection from User End
+  const [departments, setDepartments] = useState<any[]>([]);
+  const [selectedDeptCode, setSelectedDeptCode] = useState<string>('auto');
+  const [selectedCategoryId, setSelectedCategoryId] = useState<string>('auto');
+  const [aiPreview, setAiPreview] = useState<any>(null);
+  const [isAiPreviewLoading, setIsAiPreviewLoading] = useState<boolean>(false);
+  const previewTimeoutRef = useRef<any>(null);
+
   // Voice recording
   const [isRecording, setIsRecording] = useState(false);
   const [recordingSeconds, setRecordingSeconds] = useState(0);
@@ -131,6 +139,23 @@ export default function CitizenDashboard() {
   const [feedbackRemarks, setFeedbackRemarks] = useState('');
   const [isVerifying, setIsVerifying] = useState(false);
 
+  async function loadDashboardData() {
+    try {
+      const [statsData, complaintsData, nearby, deptsData] = await Promise.all([
+        api.getDashboardStats('citizen'),
+        api.getComplaints(),
+        api.getNearbyComplaints(12.971598, 77.594562, 5000),
+        api.getDepartmentsAndCategories().catch(() => []),
+      ]);
+      setStats(statsData);
+      setComplaints(complaintsData);
+      setNearbyComplaints(nearby);
+      if (deptsData && Array.isArray(deptsData)) {
+        setDepartments(deptsData);
+      }
+    } catch (err) { console.error(err); }
+  }
+
   useEffect(() => {
     const userInfo = tokenStorage.getUserInfo();
     if (!userInfo || userInfo.role !== 'Citizen') {
@@ -142,17 +167,24 @@ export default function CitizenDashboard() {
     }
   }, []);
 
-  const loadDashboardData = async () => {
-    try {
-      const [statsData, complaintsData, nearby] = await Promise.all([
-        api.getDashboardStats('citizen'),
-        api.getComplaints(),
-        api.getNearbyComplaints(12.971598, 77.594562, 5000),
-      ]);
-      setStats(statsData);
-      setComplaints(complaintsData);
-      setNearbyComplaints(nearby);
-    } catch (err) { console.error(err); }
+  const handleDescriptionChange = (val: string) => {
+    setDescription(val);
+    if (previewTimeoutRef.current) clearTimeout(previewTimeoutRef.current);
+    if (val.trim().length >= 3) {
+      setIsAiPreviewLoading(true);
+      previewTimeoutRef.current = setTimeout(async () => {
+        try {
+          const preview = await api.previewAI(val);
+          setAiPreview(preview);
+        } catch (e) {
+          console.error("AI preview error", e);
+        } finally {
+          setIsAiPreviewLoading(false);
+        }
+      }, 350);
+    } else {
+      setAiPreview(null);
+    }
   };
 
   const handleLogout = () => {
@@ -233,6 +265,14 @@ export default function CitizenDashboard() {
       fd.append('location_latitude', latitude.toString());
       fd.append('location_longitude', longitude.toString());
       fd.append('location_address', address || 'Bengaluru, Karnataka');
+      
+      // Pass category override if selected by citizen, or confirmed from AI preview
+      if (selectedCategoryId !== 'auto') {
+        fd.append('category_id', selectedCategoryId);
+      } else if (aiPreview?.predicted_category_id) {
+        fd.append('category_id', aiPreview.predicted_category_id.toString());
+      }
+
       if (duplicateOfId) fd.append('duplicate_of_id', duplicateOfId.toString());
       if (imageFile) fd.append('file', imageFile);
       if (audioFile) fd.append('audio_file', audioFile);
@@ -251,6 +291,7 @@ export default function CitizenDashboard() {
       }
 
       setDescription(''); setImageFile(null); setAudioFile(null);
+      setAiPreview(null); setSelectedDeptCode('auto'); setSelectedCategoryId('auto');
       setDuplicateWarning(null); setIsFormOpen(false);
       loadDashboardData();
     } catch (err: any) {
@@ -581,20 +622,101 @@ export default function CitizenDashboard() {
               <h2 className="font-extrabold text-xl text-slate-900 dark:text-white">Report a Civic Issue</h2>
               <button onClick={() => setIsFormOpen(false)} className="text-slate-400 hover:text-slate-600 text-xl font-bold">✕</button>
             </div>
-
             <div className="space-y-4">
-              {/* Description */}
+              {/* Description Input */}
               <div>
-                <label className="block text-xs font-bold text-slate-600 dark:text-slate-300 mb-1">Issue Description *</label>
+                <div className="flex items-center justify-between mb-1">
+                  <label className="text-xs font-bold text-slate-600 dark:text-slate-300">
+                    Issue Description * (Kannada / English / Kanglish)
+                  </label>
+                  {isAiPreviewLoading && (
+                    <span className="flex items-center gap-1 text-[11px] text-blue-600 font-semibold animate-pulse">
+                      <Loader2 className="h-3 w-3 animate-spin" /> Translating & Analyzing...
+                    </span>
+                  )}
+                </div>
                 <textarea
                   value={description}
-                  onChange={(e) => setDescription(e.target.value)}
+                  onChange={(e) => handleDescriptionChange(e.target.value)}
                   onBlur={runDuplicateCheck}
-                  placeholder="Describe the civic problem in English, Kannada, or Hinglish..."
+                  placeholder="ಉದಾಹರಣೆ: 'ರಸ್ತೆಯಲ್ಲಿ ದೊಡ್ಡ ಗುಂಡಿ ಬಿದ್ದಿದೆ' or 'Garbage not collected for 3 days' or 'gundi biddide'..."
                   className="w-full border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-white rounded-xl px-3 py-2.5 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-blue-500"
                   rows={3}
                 />
               </div>
+
+              {/* Live AI Translation & Routing Preview Card */}
+              {aiPreview && description.trim().length >= 3 && (
+                <div className="bg-gradient-to-r from-blue-50 via-indigo-50 to-purple-50 dark:from-blue-950/40 dark:via-indigo-950/40 dark:to-purple-950/40 border border-blue-200 dark:border-blue-800 rounded-xl p-3.5 space-y-2.5">
+                  <div className="flex items-center justify-between">
+                    <span className="inline-flex items-center gap-1.5 text-xs font-bold text-blue-900 dark:text-blue-300">
+                      <Sparkles className="h-3.5 w-3.5 text-blue-600 dark:text-blue-400" />
+                      Language: <span className="underline">{aiPreview.detected_language === 'kn' ? 'Kannada (ಕನ್ನಡ)' : aiPreview.detected_language === 'kn-en' ? 'Kanglish' : 'English'}</span>
+                    </span>
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-blue-100 dark:bg-blue-900 text-blue-700 dark:text-blue-300">
+                        {((aiPreview.confidence || 0.85) * 100).toFixed(0)}% AI Confidence
+                      </span>
+                      {aiPreview.predicted_priority && (
+                        <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
+                          aiPreview.predicted_priority === 'Critical' ? 'bg-red-100 text-red-700 dark:bg-red-950/40 dark:text-red-400' :
+                          aiPreview.predicted_priority === 'High' ? 'bg-amber-100 text-amber-700 dark:bg-amber-950/40 dark:text-amber-400' :
+                          'bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300'
+                        }`}>
+                          {aiPreview.predicted_priority} Priority
+                        </span>
+                      )}
+                    </div>
+                  </div>
+
+                  {aiPreview.detected_language !== 'en' && aiPreview.translated_text && (
+                    <div className="text-xs text-slate-700 dark:text-slate-300 bg-white/80 dark:bg-slate-900/80 p-2 rounded-lg border border-blue-100 dark:border-blue-900/50">
+                      <p className="text-[10px] text-slate-500 font-bold mb-0.5">🔤 English Translation:</p>
+                      <p className="italic">"{aiPreview.translated_text}"</p>
+                    </div>
+                  )}
+
+                  {/* 4-Tier Jurisdiction Routing Breadcrumbs */}
+                  <div className="bg-white/90 dark:bg-slate-900/90 rounded-lg p-2.5 border border-slate-200 dark:border-slate-800">
+                    <p className="text-[10px] font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider mb-1">
+                      🏛️ Department Routing Hierarchy
+                    </p>
+                    <div className="flex flex-wrap items-center gap-1.5 text-xs font-semibold">
+                      <span className="px-2 py-0.5 rounded bg-blue-600 text-white text-[11px] font-bold">
+                        {aiPreview.agency || aiPreview.predicted_department}
+                      </span>
+                      <span className="text-slate-400">➔</span>
+                      <span className="px-2 py-0.5 rounded bg-slate-100 dark:bg-slate-800 text-slate-800 dark:text-slate-200 text-[11px]">
+                        {aiPreview.category || 'Civic'}
+                      </span>
+                      {aiPreview.subcategory && (
+                        <>
+                          <span className="text-slate-400">➔</span>
+                          <span className="px-2 py-0.5 rounded bg-indigo-50 dark:bg-indigo-950/40 text-indigo-700 dark:text-indigo-300 text-[11px] font-bold">
+                            {aiPreview.subcategory}
+                          </span>
+                        </>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Evidence Requirements & Action */}
+                  <div className="flex flex-wrap items-center justify-between gap-2 pt-1 border-t border-blue-100 dark:border-blue-900/50">
+                    <div className="flex items-center gap-1.5">
+                      {aiPreview.requires_image && (
+                        <span className="inline-flex items-center text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800">
+                          📷 Image Required
+                        </span>
+                      )}
+                      {aiPreview.requires_gps && (
+                        <span className="inline-flex items-center text-[10px] font-bold px-2 py-0.5 rounded-full bg-sky-50 dark:bg-sky-950/40 text-sky-700 dark:text-sky-300 border border-sky-200 dark:border-sky-800">
+                          📍 GPS Required
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              )}
 
               {/* Voice Recording */}
               <div className="border border-dashed border-indigo-200 dark:border-indigo-800 rounded-xl p-3 bg-indigo-50/50 dark:bg-indigo-950/20">
@@ -634,7 +756,9 @@ export default function CitizenDashboard() {
                   onChange={(e) => setLanguage(e.target.value)}
                   className="w-full border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-white rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
                 >
-                  {['English', 'Kannada', 'Hinglish'].map(l => <option key={l}>{l}</option>)}
+                  <option value="Kannada">ಕನ್ನಡ (Kannada)</option>
+                  <option value="English">English</option>
+                  <option value="Hinglish">Kanglish / Hinglish</option>
                 </select>
               </div>
 
@@ -710,7 +834,7 @@ export default function CitizenDashboard() {
                   className="w-full bg-blue-600 hover:bg-blue-700 disabled:bg-slate-300 dark:disabled:bg-slate-700 text-white font-bold py-3 rounded-xl text-sm flex items-center justify-center gap-2 transition"
                 >
                   {isSubmitting ? (
-                    <><Loader2 className="h-4 w-4 animate-spin" /> Processing...</>
+                    <><Loader2 className="h-4 w-4 animate-spin" /> Processing & Routing...</>
                   ) : (
                     <><MessageSquare className="h-4 w-4" /> Submit Complaint</>
                   )}

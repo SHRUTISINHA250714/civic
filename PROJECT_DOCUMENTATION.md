@@ -28,7 +28,7 @@ The platform empowers citizens to report civic grievances using **multilingual n
 * **Zero-Drop Translation & Preprocessing**: Automatically normalizes Kannada/Hinglish input to standard English for NLP classification while preserving the citizen's original statement and audio recordings.
 * **Explainable Multimodal Evidence Trust Scoring (0–100%)**: Cross-evaluates live device GPS against EXIF photo metadata, checks upload timestamp plausibility, and validates whether YOLOv8 computer vision detected objects match the reported category.
 * **Spatial & Semantic Duplicate Detection**: Prevents ticket flooding by merging new complaints within a 100m radius and high semantic cosine similarity into active master cases.
-* **Configurable Karnataka Agency Smart Routing**: Automatically routes tickets to on-duty officers across 6 Karnataka civic authorities (**BBMP, BWSSB, BESCOM, BMRCL, BDA, Bengaluru Traffic Police**) based on least active load.
+* **Configurable Karnataka Agency Smart Routing**: Automatically routes tickets to on-duty officers across 4 Karnataka civic authorities (**BBMP, BESCOM, BWSSB, BSWML**) based on least active load.
 * **Officer Workflow & Proof of Resolution**: Field officers must upload after-fix photographic proof and detailed remediation logs to mark tickets resolved.
 * **Citizen Verification & Reopen Loop**: The citizen retains the final authority to approve resolution (closing the case with a 1–5 star rating) or reject it (reopening the case with feedback).
 * **Automated SLA Policies & Escalations**: Dynamic countdown timers with automated warnings (at 75% elapsed time) and administrative breach escalations.
@@ -71,7 +71,7 @@ The platform empowers citizens to report civic grievances using **multilingual n
              │
              ▼
    KARNATAKA SMART ROUTING ENGINE
-  • Agency Lookup (BBMP / BWSSB / BESCOM / BMRCL / BDA / Traffic Police)
+  • Agency Lookup (BBMP / BESCOM / BWSSB / BSWML)
   • 8 Bengaluru Administrative Zones & Ward Mapping
   • Least-Active Load Officer Assignment & Notification
              │
@@ -155,14 +155,12 @@ The platform empowers citizens to report civic grievances using **multilingual n
 * **Database Models**: `User`, `Role`, `Officer`, `Department`.
 
 ### Phase 4 — Karnataka Geography & Civic Agency Master Model
-* **Core Deliverable**: Configured 6 primary Karnataka civic agencies and 8 Bengaluru administrative zones.
+* **Core Deliverable**: Configured 4 primary Karnataka civic agencies and 8 Bengaluru administrative zones.
 * **Agencies**:
-  1. **BBMP** (*Bruhat Bengaluru Mahanagara Palike*) — Solid waste, roads, tree fall, public health.
-  2. **BWSSB** (*Bangalore Water Supply and Sewerage Board*) — Water supply, pipe bursts, sewage overflow.
-  3. **BESCOM** (*Bangalore Electricity Supply Company*) — Power outages, fallen cables, transformer sparks.
-  4. **BMRCL** (*Namma Metro*) — Metro tracks, station escalators, metro viaduct safety.
-  5. **BDA** (*Bangalore Development Authority*) — Encroachments, layout plans, civic amenities.
-  6. **Bengaluru Traffic Police (BTP)** — Signal malfunctions, road bottlenecks, traffic light damage.
+  1. **BBMP** (*Bruhat Bengaluru Mahanagara Palike*) — Municipal/civic services: roads, potholes, footpaths, storm drains, streetlights, trees, parks, public health, lakes.
+  2. **BESCOM** (*Bangalore Electricity Supply Company Limited*) — Electricity distribution: power outages, electrical faults, voltage fluctuations, transformers, poles, wires, meters, billing.
+  3. **BWSSB** (*Bangalore Water Supply and Sewerage Board*) — Water supply and underground drainage: dry taps, pipe leakage, contaminated water, sewer overflow, blocked drains, manhole covers.
+  4. **BSWML** (*Bengaluru Solid Waste Management Limited*) — Solid waste and C&D waste: door-to-door garbage collection, auto-tipper, black spots, illegal dumping, garbage burning, segregation.
 * **Zones**: East, West, South, Mahadevapura, Bommanahalli, Yelahanka, Rajarajeshwari Nagar, Dasarahalli.
 
 ### Phase 5 — Citizen Multimodal Complaint Collection
@@ -264,7 +262,7 @@ erDiagram
 
 1. **`users`**: Master user identity records (`id`, `name`, `email`, `hashed_password`, `role_id`, `phone`, `status`, `created_at`).
 2. **`roles`**: System permissions (`Citizen`, `Officer`, `Admin`).
-3. **`departments`**: Karnataka service agencies (`BBMP`, `BWSSB`, `BESCOM`, `BMRCL`, `BDA`, `Traffic Police`).
+3. **`departments`**: Karnataka service agencies (`BBMP`, `BESCOM`, `BWSSB`, `BSWML`).
 4. **`officers`**: Officer profiles linking `user_id` to `department_id` with active duty status.
 5. **`complaint_categories`**: 20 standardized grievance classifications linked to responsible departments.
 6. **`complaints`**: Core ticket table (`id`, `citizen_id`, `category_id`, `description`, `original_description`, `language`, `audio_url`, `location_latitude`, `location_longitude`, `location_address`, `status`, `priority`, `assigned_officer_id`, `duplicate_of_complaint_id`, `sla_deadline`, `sla_status`, `is_escalated`, `citizen_verified`, `citizen_feedback_rating`, `citizen_feedback_remarks`, `reopen_count`, `created_at`, `updated_at`).
@@ -299,6 +297,7 @@ SentenceTransformers                 │                     Haversine Distance 
 • Priority Prediction Engine         │                              │
       │                              │                              │
       └──────────────────────────────┼──────────────────────────────┘
+                                     │
                                      ▼
                    MULTIMODAL EVIDENCE TRUST ENGINE
                   • Trust Score: 0 - 100%
@@ -460,12 +459,10 @@ python backend/test_e2e.py
 |---|---|---|---|
 | **System Admin** | `admin@civicai.gov.in` | `adminpassword` | State / City Administrator |
 | **Citizen User** | `citizen@gmail.com` | `citizenpassword` | Public Citizen |
-| **BBMP Officer** | `officer.bbmp@civicai.gov.in` | `officerpassword` | BBMP (Roads, Waste, Health) |
-| **BWSSB Officer** | `officer.bwssb@civicai.gov.in` | `officerpassword` | BWSSB (Water, Sewage) |
-| **BESCOM Officer** | `officer.bescom@civicai.gov.in` | `officerpassword` | BESCOM (Power, Electricity) |
-| **Traffic Officer**| `officer.traffic@civicai.gov.in` | `officerpassword` | Bengaluru Traffic Police |
-| **BMRCL Officer** | `officer.bmrcl@civicai.gov.in` | `officerpassword` | Namma Metro |
-| **BDA Officer** | `officer.bda@civicai.gov.in` | `officerpassword` | Bangalore Development Authority |
+| **BBMP Officer** | `officer.bbmp@civicai.gov.in` | `officerpassword` | BBMP (Roads & Civic Services) |
+| **BESCOM Officer** | `officer.bescom@civicai.gov.in` | `officerpassword` | BESCOM (Electricity) |
+| **BWSSB Officer** | `officer.bwssb@civicai.gov.in` | `officerpassword` | BWSSB (Water & Sewerage) |
+| **BSWML Officer** | `officer.bswml@civicai.gov.in` | `officerpassword` | BSWML (Solid Waste Management) |
 
 ---
 

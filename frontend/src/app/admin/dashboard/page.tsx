@@ -54,19 +54,7 @@ export default function AdminDashboard() {
   const [activeSubTab, setActiveSubTab] = useState<'predictive' | 'categories' | 'officers' | 'citizens'>('predictive');
   const [isLoading, setIsLoading] = useState(false);
 
-  // Load user session
-  useEffect(() => {
-    const userInfo = tokenStorage.getUserInfo();
-    if (!userInfo || userInfo.role !== "Admin") {
-      toast.error("Unauthorized access. Redirecting...");
-      router.push("/login");
-    } else {
-      setUser(userInfo);
-      loadDashboardData();
-    }
-  }, []);
-
-  const loadDashboardData = async () => {
+  async function loadDashboardData() {
     setIsLoading(true);
     try {
       const statsData = await api.getDashboardStats("admin");
@@ -97,7 +85,19 @@ export default function AdminDashboard() {
     } finally {
       setIsLoading(false);
     }
-  };
+  }
+
+  // Load user session
+  useEffect(() => {
+    const userInfo = tokenStorage.getUserInfo();
+    if (!userInfo || userInfo.role !== "Admin") {
+      toast.error("Unauthorized access. Redirecting...");
+      router.push("/login");
+    } else {
+      setUser(userInfo);
+      loadDashboardData();
+    }
+  }, []);
 
   const handleLogout = () => {
     tokenStorage.clearToken();
