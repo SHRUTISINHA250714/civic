@@ -9,7 +9,8 @@ import {
   Image as ImageIcon, Loader2, Info, CheckCircle2,
   Clock, AlertTriangle, MessageSquare, Globe, Navigation,
   ArrowRight, Mic, MicOff, Star, ThumbsUp, ThumbsDown,
-  Shield, TriangleAlert, RefreshCw, Volume2, Sparkles
+  Shield, TriangleAlert, RefreshCw, Volume2, Sparkles,
+  Users, Layers, ExternalLink
 } from 'lucide-react';
 import { api, tokenStorage } from '@/lib/api';
 import { toast } from 'sonner';
@@ -107,6 +108,80 @@ function statusClass(status: string) {
   return m[status] || 'bg-blue-100 text-blue-800';
 }
 
+// ── 6-Stage Parent Progress Stepper ─────────────────────────────────────────
+function ParentProgressStepper({ status, evidenceCheck, isReopened }: { status: string; evidenceCheck?: any; isReopened?: boolean }) {
+  const stages = [
+    { key: 'Reported', label: 'Reported', desc: 'Received & Logged' },
+    { key: 'Verified', label: 'Verified', desc: 'AI & Geo Checked' },
+    { key: 'Assigned', label: 'Assigned', desc: 'Officer Dispatched' },
+    { key: 'In Progress', label: 'In Progress', desc: 'Work Underway' },
+    { key: 'Resolution Submitted', label: 'Resolution Submitted', desc: 'Proof Uploaded' },
+    { key: 'Resolved', label: 'Resolved', desc: 'Fixed & Verified' },
+  ];
+
+  let currentLevel = 0;
+  if (status === 'Registered') {
+    currentLevel = (evidenceCheck?.verification_decision === 'VERIFIED' || evidenceCheck?.trust_score >= 50) ? 1 : 0;
+  } else if (status === 'Accepted') {
+    currentLevel = 2;
+  } else if (status === 'In Progress') {
+    currentLevel = 3;
+  } else if (status === 'Resolved') {
+    currentLevel = 4;
+  } else if (status === 'Closed') {
+    currentLevel = 5;
+  } else if (status === 'Reopened') {
+    currentLevel = 3;
+  }
+
+  return (
+    <div className="w-full py-3">
+      <div className="flex items-center justify-between relative">
+        <div className="absolute top-3.5 left-4 right-4 h-0.5 bg-slate-200 dark:bg-slate-700 -z-0" />
+        <div
+          className="absolute top-3.5 left-4 h-0.5 bg-blue-600 transition-all duration-500 -z-0"
+          style={{ width: `${Math.min(100, (currentLevel / (stages.length - 1)) * 100)}%` }}
+        />
+
+        {stages.map((stage, idx) => {
+          const isPassed = idx <= currentLevel;
+          const isCurrent = idx === currentLevel;
+          return (
+            <div key={stage.key} className="flex flex-col items-center relative z-10 text-center flex-1">
+              <div
+                className={`w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold transition-all ${
+                  isCurrent
+                    ? 'bg-blue-600 text-white ring-4 ring-blue-100 dark:ring-blue-900/50 shadow-md scale-110'
+                    : isPassed
+                    ? 'bg-emerald-600 text-white'
+                    : 'bg-white dark:bg-slate-800 text-slate-400 border-2 border-slate-200 dark:border-slate-700'
+                }`}
+              >
+                {isPassed && !isCurrent ? (
+                  <CheckCircle2 className="h-4 w-4" />
+                ) : (
+                  <span>{idx + 1}</span>
+                )}
+              </div>
+              <span className={`text-[10px] font-bold mt-1.5 leading-tight ${isCurrent ? 'text-blue-600 dark:text-blue-400 font-extrabold' : isPassed ? 'text-slate-800 dark:text-slate-200' : 'text-slate-400'}`}>
+                {stage.label}
+              </span>
+              <span className="text-[9px] text-slate-400 hidden sm:block">
+                {stage.desc}
+              </span>
+            </div>
+          );
+        })}
+      </div>
+      {isReopened && (
+        <div className="mt-2 text-center text-xs text-rose-600 font-semibold flex items-center justify-center gap-1">
+          <RefreshCw className="h-3 w-3 animate-spin" /> Issue was reopened and is being re-addressed by field team
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function CitizenDashboard() {
   const router = useRouter();
   const [user, setUser] = useState<any>(null);
@@ -149,6 +224,7 @@ export default function CitizenDashboard() {
   // Duplicate
   const [isDuplicateChecking, setIsDuplicateChecking] = useState(false);
   const [duplicateWarning, setDuplicateWarning] = useState<any>(null);
+  const [duplicateResultModal, setDuplicateResultModal] = useState<any>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   // Citizen verification modal
@@ -265,7 +341,17 @@ export default function CitizenDashboard() {
       fd.append('latitude', latitude.toString());
       fd.append('longitude', longitude.toString());
       fd.append('description', description);
-      fd.append('category_name', 'Others');
+      
+      let catName = 'Others';
+      if (selectedCategoryId !== 'auto') {
+        for (const dept of departments) {
+          const foundCat = dept.categories?.find((c: any) => c.id.toString() === selectedCategoryId);
+          if (foundCat) { catName = foundCat.name; break; }
+        }
+      } else if (aiPreview?.category || aiPreview?.predicted_category_name) {
+        catName = aiPreview.category || aiPreview.predicted_category_name;
+      }
+      fd.append('category_name', catName);
       const res = await api.checkDuplicate(fd);
       setDuplicateWarning(res.is_duplicate ? res : null);
     } catch { /* silent */ }
@@ -278,7 +364,7 @@ export default function CitizenDashboard() {
       return;
     }
     setIsSubmitting(true);
-    const tid = toast.loading(duplicateOfId ? 'Joining issue...' : 'Running AI pipeline & routing...');
+    const tid = toast.loading(duplicateOfId ? 'Linking to issue...' : 'Running AI pipeline & routing...');
     try {
       const fd = new FormData();
       fd.append('description', description || 'Voice complaint');
@@ -304,8 +390,10 @@ export default function CitizenDashboard() {
       const res = await api.raiseComplaint(fd);
       toast.dismiss(tid);
 
-      if (duplicateOfId) {
-        toast.success(`Joined complaint #${duplicateOfId}!`);
+      if (res.is_duplicate) {
+        // Show explicit "Already Reported" result modal
+        setDuplicateResultModal(res);
+        toast.success(`Report #${res.child_report_id || res.id} created and linked to Complaint #${res.parent_complaint_id || res.duplicate_of_complaint_id}!`);
       } else {
         const trust = res.evidence_check;
         toast.success(
@@ -317,7 +405,10 @@ export default function CitizenDashboard() {
       setDescription(''); setImageFile(null); setAudioFile(null); setGpsAccuracy(null);
       setAiPreview(null); setSelectedDeptCode('auto'); setSelectedCategoryId('auto');
       setDuplicateWarning(null); setIsFormOpen(false);
-      loadDashboardData();
+      await loadDashboardData();
+      if (res.is_duplicate) {
+        setSelectedComplaint(res);
+      }
     } catch (err: any) {
       toast.dismiss(tid);
       toast.error(err.message || 'Failed to register complaint.');
@@ -423,12 +514,31 @@ export default function CitizenDashboard() {
                   }`}
                 >
                   <div className="flex items-center justify-between mb-1">
-                    <span className="text-[10px] font-bold text-slate-400">#{c.id}</span>
-                    <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold uppercase ${statusClass(c.status)}`}>
-                      {c.status}
-                    </span>
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-[10px] font-bold text-slate-400">#{c.id}</span>
+                      {c.duplicate_of_complaint_id && (
+                        <span className="inline-flex items-center gap-0.5 text-[9px] font-bold px-1.5 py-0.5 rounded bg-purple-100 dark:bg-purple-950/40 text-purple-700 dark:text-purple-300 border border-purple-200 dark:border-purple-800">
+                          <Layers className="h-2.5 w-2.5" /> Linked
+                        </span>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-1.5">
+                      {c.impact_count && c.impact_count > 1 && (
+                        <span className="text-[9px] font-bold text-purple-700 dark:text-purple-300 bg-purple-50 dark:bg-purple-950/30 px-1.5 py-0.5 rounded border border-purple-200 dark:border-purple-800 flex items-center gap-0.5">
+                          <Users className="h-2.5 w-2.5" /> {c.impact_count}
+                        </span>
+                      )}
+                      <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold uppercase ${statusClass(c.status)}`}>
+                        {c.status}
+                      </span>
+                    </div>
                   </div>
                   <h4 className="font-bold text-sm text-slate-900 dark:text-white">{c.category_name}</h4>
+                  {c.duplicate_of_complaint_id && (
+                    <div className="text-[10px] text-purple-700 dark:text-purple-300 font-semibold my-0.5 flex items-center gap-1">
+                      <span>🔗 Linked to Parent Ticket #C-{c.parent_complaint_id || c.duplicate_of_complaint_id}</span>
+                    </div>
+                  )}
                   <p className="text-xs text-slate-500 dark:text-slate-400 line-clamp-2 mt-0.5">{c.description}</p>
                   {c.audio_url && (
                     <span className="inline-flex items-center gap-1 mt-1 text-[10px] text-indigo-600 dark:text-indigo-400 font-semibold">
@@ -510,6 +620,42 @@ export default function CitizenDashboard() {
                 <span className={`text-xs px-3 py-1 rounded-full font-bold ${statusClass(selectedComplaint.status)}`}>
                   {selectedComplaint.status}
                 </span>
+              </div>
+
+              {/* Linked duplicate notice banner */}
+              {selectedComplaint.duplicate_of_complaint_id && (
+                <div className="bg-gradient-to-r from-purple-50 to-indigo-50 dark:from-purple-950/30 dark:to-indigo-950/30 border border-purple-200 dark:border-purple-800 rounded-xl p-3.5 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-bold text-purple-900 dark:text-purple-300 flex items-center gap-1.5">
+                      <Layers className="h-4 w-4 text-purple-600" />
+                      Linked to Parent Ticket #C-{selectedComplaint.parent_complaint_id || selectedComplaint.duplicate_of_complaint_id}
+                    </span>
+                    <span className="text-[10px] font-bold text-purple-800 dark:text-purple-200 bg-purple-100 dark:bg-purple-900/60 px-2 py-0.5 rounded-full flex items-center gap-1">
+                      <Users className="h-3 w-3" />
+                      {selectedComplaint.impact_count || 1} Citizens Impacted
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-purple-800 dark:text-purple-300 leading-relaxed">
+                    This grievance is linked to an existing operational work order. Field officers are resolving this incident under Ticket #C-{selectedComplaint.parent_complaint_id || selectedComplaint.duplicate_of_complaint_id}. Real-time operational progress is shown below.
+                  </p>
+                </div>
+              )}
+
+              {/* 6-Stage Parent Progress Stepper */}
+              <div className="bg-slate-50 dark:bg-slate-800/50 rounded-xl p-3.5 border border-slate-100 dark:border-slate-700">
+                <div className="flex items-center justify-between mb-1">
+                  <p className="text-xs font-bold text-slate-700 dark:text-slate-300 flex items-center gap-1">
+                    <Navigation className="h-3.5 w-3.5 text-blue-500" /> Progress Lifecycle
+                  </p>
+                  <span className="text-[10px] text-slate-500 font-semibold">
+                    Current: <span className="font-bold text-blue-600 dark:text-blue-400">{selectedComplaint.parent_status || selectedComplaint.status}</span>
+                  </span>
+                </div>
+                <ParentProgressStepper
+                  status={selectedComplaint.parent_status || selectedComplaint.status}
+                  evidenceCheck={selectedComplaint.evidence_check}
+                  isReopened={selectedComplaint.reopen_count > 0}
+                />
               </div>
 
               {/* SLA summary */}
@@ -605,12 +751,19 @@ export default function CitizenDashboard() {
                 </div>
               )}
 
-              {/* Status history */}
-              {selectedComplaint.status_history?.length > 0 && (
+              {/* Status history / Timeline */}
+              {((selectedComplaint.parent_status_history && selectedComplaint.parent_status_history.length > 0) || (selectedComplaint.status_history && selectedComplaint.status_history.length > 0)) && (
                 <div>
-                  <p className="text-xs font-bold text-slate-600 dark:text-slate-300 mb-2">Timeline</p>
+                  <p className="text-xs font-bold text-slate-600 dark:text-slate-300 mb-2 flex items-center justify-between">
+                    <span>{selectedComplaint.duplicate_of_complaint_id ? 'Parent Operational Progress Timeline' : 'Status Timeline'}</span>
+                    {selectedComplaint.duplicate_of_complaint_id && (
+                      <span className="text-[10px] text-purple-600 dark:text-purple-400 font-semibold">
+                        Linked Parent #C-{selectedComplaint.parent_complaint_id || selectedComplaint.duplicate_of_complaint_id}
+                      </span>
+                    )}
+                  </p>
                   <div className="space-y-1.5">
-                    {selectedComplaint.status_history.map((h: any) => (
+                    {(selectedComplaint.parent_status_history?.length > 0 ? selectedComplaint.parent_status_history : selectedComplaint.status_history).map((h: any) => (
                       <div key={h.id} className="flex items-start gap-2 text-[10px]">
                         <div className="w-1.5 h-1.5 rounded-full bg-blue-500 mt-1 shrink-0" />
                         <div>
@@ -846,26 +999,35 @@ export default function CitizenDashboard() {
                 </div>
               )}
               {duplicateWarning?.is_duplicate && (
-                <div className="bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 rounded-xl p-3">
-                  <div className="flex items-center gap-2 mb-2">
-                    <AlertTriangle className="h-4 w-4 text-amber-600" />
-                    <span className="text-xs font-bold text-amber-800 dark:text-amber-300">Similar Report Found Nearby!</span>
+                <div className="bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 rounded-xl p-3.5 space-y-2.5">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <AlertTriangle className="h-4 w-4 text-amber-600" />
+                      <span className="text-xs font-bold text-amber-900 dark:text-amber-200">Similar Issue Found Nearby</span>
+                    </div>
+                    {duplicateWarning.impact_count && (
+                      <span className="text-[10px] font-bold text-amber-800 dark:text-amber-300 bg-amber-100 dark:bg-amber-900/60 px-2 py-0.5 rounded-full flex items-center gap-1">
+                        <Users className="h-3 w-3" /> {duplicateWarning.impact_count} Reports
+                      </span>
+                    )}
                   </div>
-                  <p className="text-xs text-amber-700 dark:text-amber-400 mb-3">{duplicateWarning.message}</p>
-                  <div className="flex gap-2">
+                  <p className="text-xs text-amber-800 dark:text-amber-300/90 leading-relaxed">
+                    This issue has already been reported nearby under <strong>Complaint #C-{duplicateWarning.parent_complaint_id || duplicateWarning.duplicate_of_id}</strong> (Status: <strong>{duplicateWarning.parent_status || 'In Progress'}</strong>). You will receive your own unique Report ID and can track live resolution progress.
+                  </p>
+                  <div className="flex gap-2 pt-1">
                     <button
                       onClick={() => handleSubmitGrievance(duplicateWarning.duplicate_of_id)}
                       disabled={isSubmitting}
-                      className="flex-1 bg-amber-600 hover:bg-amber-700 text-white text-xs font-bold py-2 rounded-lg flex items-center justify-center gap-1 transition"
+                      className="flex-1 bg-amber-600 hover:bg-amber-700 text-white text-xs font-bold py-2.5 rounded-xl flex items-center justify-center gap-1.5 shadow-sm transition"
                     >
-                      <ArrowRight className="h-3.5 w-3.5" /> Join Existing (#{duplicateWarning.duplicate_of_id})
+                      <ArrowRight className="h-3.5 w-3.5" /> Link Report (Get Report ID)
                     </button>
                     <button
                       onClick={() => handleSubmitGrievance()}
                       disabled={isSubmitting}
-                      className="flex-1 border border-amber-300 dark:border-amber-700 text-amber-800 dark:text-amber-300 text-xs font-bold py-2 rounded-lg hover:bg-amber-100 dark:hover:bg-amber-900/20 transition"
+                      className="flex-1 border border-amber-300 dark:border-amber-700 text-amber-900 dark:text-amber-200 text-xs font-bold py-2.5 rounded-xl hover:bg-amber-100 dark:hover:bg-amber-900/30 transition"
                     >
-                      File as New
+                      File as Separate
                     </button>
                   </div>
                 </div>
@@ -946,6 +1108,128 @@ export default function CitizenDashboard() {
               </div>
               <button onClick={() => setIsVerifyModalOpen(false)} className="w-full text-xs text-slate-400 hover:text-slate-600 py-1 transition">
                 Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Already Reported (Duplicate Confirmation) Modal ─────────────────── */}
+      {duplicateResultModal && (
+        <div className="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-white dark:bg-slate-900 rounded-3xl shadow-2xl w-full max-w-xl p-6 border border-slate-200 dark:border-slate-800 animate-in fade-in zoom-in-95 duration-200">
+            {/* Modal Header */}
+            <div className="flex items-start justify-between pb-4 border-b border-slate-100 dark:border-slate-800">
+              <div className="flex items-center gap-3">
+                <div className="w-11 h-11 rounded-2xl bg-amber-100 dark:bg-amber-950/50 flex items-center justify-center text-amber-600 dark:text-amber-400">
+                  <Layers className="h-6 w-6" />
+                </div>
+                <div>
+                  <h3 className="font-extrabold text-xl text-slate-900 dark:text-white">Already Reported</h3>
+                  <p className="text-xs text-slate-500 mt-0.5">
+                    This issue has already been reported by another citizen.
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => setDuplicateResultModal(null)}
+                className="text-slate-400 hover:text-slate-600 text-xl font-bold transition p-1"
+              >
+                ✕
+              </button>
+            </div>
+
+            {/* Modal Content */}
+            <div className="py-4 space-y-4">
+              <div className="bg-amber-50 dark:bg-amber-950/20 border border-amber-200 dark:border-amber-800/60 rounded-2xl p-4">
+                <p className="text-xs text-amber-900 dark:text-amber-200 leading-relaxed font-medium">
+                  Your report has been linked to <strong className="font-bold text-amber-950 dark:text-amber-100">Complaint #C-{duplicateResultModal.parent_complaint_id || duplicateResultModal.duplicate_of_complaint_id}</strong>.
+                  You can track live progress as the operational team resolves this issue.
+                </p>
+              </div>
+
+              {/* Data Cards Grid */}
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                <div className="bg-slate-50 dark:bg-slate-800/60 rounded-xl p-3 border border-slate-100 dark:border-slate-700/60">
+                  <span className="text-[10px] uppercase font-bold text-slate-400 block">Your Report ID</span>
+                  <span className="text-sm font-extrabold text-blue-600 dark:text-blue-400 mt-0.5 block">
+                    #{duplicateResultModal.child_report_id || duplicateResultModal.id}
+                  </span>
+                </div>
+
+                <div className="bg-slate-50 dark:bg-slate-800/60 rounded-xl p-3 border border-slate-100 dark:border-slate-700/60">
+                  <span className="text-[10px] uppercase font-bold text-slate-400 block">Parent Complaint</span>
+                  <span className="text-sm font-extrabold text-slate-900 dark:text-white mt-0.5 block">
+                    #C-{duplicateResultModal.parent_complaint_id || duplicateResultModal.duplicate_of_complaint_id}
+                  </span>
+                </div>
+
+                <div className="bg-slate-50 dark:bg-slate-800/60 rounded-xl p-3 border border-slate-100 dark:border-slate-700/60">
+                  <span className="text-[10px] uppercase font-bold text-slate-400 block">Current Status</span>
+                  <span className={`text-xs font-bold px-2 py-0.5 rounded-full mt-1 inline-block ${statusClass(duplicateResultModal.parent_status || duplicateResultModal.status)}`}>
+                    {duplicateResultModal.parent_status || duplicateResultModal.status}
+                  </span>
+                </div>
+
+                <div className="bg-slate-50 dark:bg-slate-800/60 rounded-xl p-3 border border-slate-100 dark:border-slate-700/60">
+                  <span className="text-[10px] uppercase font-bold text-slate-400 block">Category</span>
+                  <span className="text-xs font-bold text-slate-800 dark:text-slate-200 mt-0.5 block truncate">
+                    {duplicateResultModal.category_name}
+                  </span>
+                </div>
+
+                <div className="bg-slate-50 dark:bg-slate-800/60 rounded-xl p-3 border border-slate-100 dark:border-slate-700/60">
+                  <span className="text-[10px] uppercase font-bold text-slate-400 block">Location</span>
+                  <span className="text-xs font-bold text-slate-800 dark:text-slate-200 mt-0.5 block truncate" title={duplicateResultModal.location_address}>
+                    {duplicateResultModal.location_address || 'Nearby'}
+                  </span>
+                </div>
+
+                <div className="bg-slate-50 dark:bg-slate-800/60 rounded-xl p-3 border border-slate-100 dark:border-slate-700/60">
+                  <span className="text-[10px] uppercase font-bold text-slate-400 block">Total Reports</span>
+                  <span className="text-xs font-bold text-purple-700 dark:text-purple-300 mt-0.5 flex items-center gap-1">
+                    <Users className="h-3.5 w-3.5" />
+                    <span>{duplicateResultModal.impact_count || 1} Citizens</span>
+                  </span>
+                </div>
+              </div>
+
+              {/* Progress Stepper Card */}
+              <div className="bg-slate-50 dark:bg-slate-800/40 rounded-2xl p-4 border border-slate-100 dark:border-slate-800">
+                <div className="flex items-center justify-between mb-1">
+                  <span className="text-xs font-bold text-slate-700 dark:text-slate-300">
+                    Parent Ticket Progress
+                  </span>
+                  <span className="text-[10px] text-slate-500 font-semibold">
+                    Live Operational Stages
+                  </span>
+                </div>
+                <ParentProgressStepper
+                  status={duplicateResultModal.parent_status || duplicateResultModal.status}
+                  evidenceCheck={duplicateResultModal.evidence_check}
+                  isReopened={duplicateResultModal.reopen_count > 0}
+                />
+              </div>
+            </div>
+
+            {/* Modal Actions */}
+            <div className="flex items-center gap-3 pt-4 border-t border-slate-100 dark:border-slate-800">
+              <button
+                onClick={() => {
+                  const targetId = duplicateResultModal.child_report_id || duplicateResultModal.id;
+                  const found = complaints.find(c => c.id === targetId) || duplicateResultModal;
+                  setSelectedComplaint(found);
+                  setDuplicateResultModal(null);
+                }}
+                className="flex-1 bg-blue-600 hover:bg-blue-700 text-white font-bold py-2.5 px-4 rounded-xl text-sm flex items-center justify-center gap-2 shadow-lg shadow-blue-500/20 transition"
+              >
+                <ArrowRight className="h-4 w-4" /> View Progress
+              </button>
+              <button
+                onClick={() => setDuplicateResultModal(null)}
+                className="px-4 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 text-sm font-semibold transition"
+              >
+                Close
               </button>
             </div>
           </div>

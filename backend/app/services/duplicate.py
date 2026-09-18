@@ -39,7 +39,7 @@ def check_duplicate_complaint(
     description: str,
     category_id: int,
     distance_threshold_m: float = 100.0,
-    similarity_threshold: float = 0.70
+    similarity_threshold: float = 0.85
 ) -> Tuple[bool, Optional[int], float]:
     """
     Checks if a complaint is a duplicate of an existing active complaint.
@@ -51,7 +51,7 @@ def check_duplicate_complaint(
     
     candidates = db.query(Complaint).filter(
         Complaint.category_id == category_id,
-        Complaint.status.in_(["Registered", "Accepted", "In Progress"]),
+        Complaint.status.in_(["Registered", "Accepted", "In Progress", "Reopened"]),
         Complaint.location_latitude.between(latitude - delta, latitude + delta),
         Complaint.location_longitude.between(longitude - delta, longitude + delta),
         Complaint.duplicate_of_complaint_id.is_(None)  # Must be an original complaint

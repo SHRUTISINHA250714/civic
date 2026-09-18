@@ -56,6 +56,7 @@ class Complaint(Base):
     # Assignment
     assigned_officer_id = Column(Integer, ForeignKey("officers.id"), nullable=True)
     duplicate_of_complaint_id = Column(Integer, ForeignKey("complaints.id"), nullable=True)
+    impact_count = Column(Integer, default=1)
     
     # SLA Tracking
     sla_deadline = Column(DateTime, nullable=True)

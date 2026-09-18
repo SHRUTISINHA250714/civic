@@ -4,6 +4,7 @@ import shutil
 from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, Form
 from sqlalchemy.orm import Session
+from sqlalchemy import func
 from backend.app.core.database import get_db
 from backend.app.core.config import settings
 from backend.app.models.user import User, Officer
@@ -216,6 +217,43 @@ def serialize_complaint(c: Complaint, db: Session) -> dict:
 
     sla_res = get_sla_summary(c)
 
+    # Phase 10 Duplicate & Impact calculations
+    is_duplicate = False
+    parent_complaint_id = None
+    child_report_id = None
+    parent_status = None
+    impact_count = getattr(c, "impact_count", 1) or 1
+    dup_message = None
+    parent_history_res = []
+    child_count = 0
+
+    if c.duplicate_of_complaint_id:
+        is_duplicate = True
+        parent_complaint_id = c.duplicate_of_complaint_id
+        child_report_id = c.id
+        parent = db.query(Complaint).filter(Complaint.id == c.duplicate_of_complaint_id).first()
+        if parent:
+            parent_status = parent.status
+            impact_count = parent.impact_count or 1
+            dup_message = f"This issue has already been reported by another citizen. Your report has been linked to Complaint #{parent.id}."
+            parent_history_res = [
+                {
+                    "id": h.id,
+                    "status": h.status,
+                    "remarks": h.remarks,
+                    "changed_by_name": h.changed_by_user.name if h.changed_by_user else "System",
+                    "created_at": h.created_at,
+                }
+                for h in parent.status_history
+            ]
+        else:
+            parent_status = c.status
+    else:
+        child_count = db.query(func.count(Complaint.id)).filter(
+            Complaint.duplicate_of_complaint_id == c.id
+        ).scalar() or 0
+        impact_count = max(getattr(c, "impact_count", 1) or 1, child_count + 1)
+
     return {
         "id":                       c.id,
         "citizen_id":               c.citizen_id,
@@ -251,6 +289,14 @@ def serialize_complaint(c: Complaint, db: Session) -> dict:
         "ai_prediction":            ai_pred_res,
         "evidence_check":           evidence_res,
         "sla_summary":              sla_res,
+        "is_duplicate":             is_duplicate,
+        "parent_complaint_id":      parent_complaint_id,
+        "child_report_id":          child_report_id,
+        "parent_status":            parent_status,
+        "impact_count":             impact_count,
+        "message":                  dup_message,
+        "parent_status_history":    parent_history_res,
+        "linked_reports_count":     child_count if not is_duplicate else 0,
     }
 
 
@@ -270,20 +316,38 @@ def check_duplicate(
         return {"is_duplicate": False, "duplicate_of_id": None, "similarity_score": 0.0,
                 "message": "Category not found."}
 
-    translated, _, _ = translate_text(description)
-    is_dup, dup_id, score = check_duplicate_complaint(db, latitude, longitude, translated, category.id)
+    is_dup, dup_id, score = check_duplicate_complaint(
+        db, latitude, longitude, description, category.id,
+        distance_threshold_m=100.0, similarity_threshold=0.85
+    )
 
-    if is_dup:
+    if is_dup and dup_id:
+        parent = db.query(Complaint).filter(Complaint.id == dup_id).first()
+        parent_status = parent.status if parent else "In Progress"
+        parent_category = parent.category.name if parent and parent.category else category_name
+        parent_location = (parent.location_address or f"({parent.location_latitude:.4f}, {parent.location_longitude:.4f})") if parent else "Nearby"
+        impact_count = (parent.impact_count or 1) if parent else 1
+
         return {
             "is_duplicate": True,
             "duplicate_of_id": dup_id,
+            "parent_complaint_id": dup_id,
             "similarity_score": round(score, 4),
-            "message": "This issue has already been reported nearby. You can join the existing complaint instead.",
+            "parent_status": parent_status,
+            "parent_category": parent_category,
+            "parent_location": parent_location,
+            "impact_count": impact_count,
+            "message": f"This issue has already been reported nearby. Linked to Complaint #{dup_id}.",
         }
     return {
         "is_duplicate": False,
         "duplicate_of_id": None,
+        "parent_complaint_id": None,
         "similarity_score": round(score, 4),
+        "parent_status": None,
+        "parent_category": None,
+        "parent_location": None,
+        "impact_count": 1,
         "message": "No duplicate issues detected nearby.",
     }
 
@@ -355,16 +419,55 @@ def raise_complaint(
 
     # ── 4. Duplicate Detection ────────────────────────────────────────────────
     assigned_duplicate_id = duplicate_of_id
+    duplicate_score = 0.0
     if not assigned_duplicate_id:
-        is_dup, dup_id, _ = check_duplicate_complaint(
-            db, location_latitude, location_longitude, translated_desc, category.id
+        is_dup, dup_id, score = check_duplicate_complaint(
+            db, location_latitude, location_longitude, translated_desc, category.id,
+            distance_threshold_m=100.0, similarity_threshold=0.85
         )
         if is_dup:
             assigned_duplicate_id = dup_id
+            duplicate_score = score
+    else:
+        duplicate_score = 1.0
+
+    # Ensure assigned_duplicate_id links to root operational complaint
+    parent_complaint = None
+    if assigned_duplicate_id:
+        parent_candidate = db.query(Complaint).filter(Complaint.id == assigned_duplicate_id).first()
+        if parent_candidate:
+            if parent_candidate.duplicate_of_complaint_id:
+                root_parent = db.query(Complaint).filter(Complaint.id == parent_candidate.duplicate_of_complaint_id).first()
+                if root_parent:
+                    assigned_duplicate_id = root_parent.id
+                    parent_complaint = root_parent
+                else:
+                    parent_complaint = parent_candidate
+            else:
+                parent_complaint = parent_candidate
+        else:
+            assigned_duplicate_id = None
+
+    # Idempotency check: did this citizen already submit a duplicate report for this parent complaint?
+    if assigned_duplicate_id and parent_complaint:
+        from datetime import datetime as dt
+        existing_report = db.query(Complaint).filter(
+            Complaint.citizen_id == current_user.id,
+            Complaint.duplicate_of_complaint_id == assigned_duplicate_id,
+        ).order_by(Complaint.created_at.desc()).first()
+
+        if existing_report:
+            time_diff = (dt.utcnow() - existing_report.created_at).total_seconds()
+            if existing_report.description == translated_desc or existing_report.original_description == original_description or time_diff < 600:
+                # Idempotent response: return existing child complaint without duplicate creation or impact inflation
+                return serialize_complaint(existing_report, db)
 
     # ── 5. Compute SLA Deadline ───────────────────────────────────────────────
     from datetime import datetime
     sla_deadline = compute_sla_deadline(db, category.id, predicted_priority)
+
+    # Status for child report should reflect parent's status (never silently Closed!)
+    initial_status = parent_complaint.status if (assigned_duplicate_id and parent_complaint) else "Registered"
 
     # ── 6. Create Complaint DB record ─────────────────────────────────────────
     complaint = Complaint(
@@ -378,9 +481,10 @@ def raise_complaint(
         location_latitude=location_latitude,
         location_longitude=location_longitude,
         location_address=location_address,
-        status="Registered",
+        status=initial_status,
         priority=predicted_priority,
         duplicate_of_complaint_id=assigned_duplicate_id,
+        impact_count=1,
         sla_deadline=sla_deadline,
         sla_status="Normal",
         is_escalated=False,
@@ -390,12 +494,20 @@ def raise_complaint(
     db.flush()
 
     # Status history entry
-    db.add(ComplaintStatusHistory(
-        complaint_id=complaint.id,
-        status="Registered",
-        remarks="Complaint registered in system.",
-        changed_by_user_id=current_user.id
-    ))
+    if assigned_duplicate_id:
+        db.add(ComplaintStatusHistory(
+            complaint_id=complaint.id,
+            status=initial_status,
+            remarks=f"Report linked to existing Complaint #{assigned_duplicate_id}.",
+            changed_by_user_id=current_user.id
+        ))
+    else:
+        db.add(ComplaintStatusHistory(
+            complaint_id=complaint.id,
+            status="Registered",
+            remarks="Complaint registered in system.",
+            changed_by_user_id=current_user.id
+        ))
 
     # AI Predictions record
     db.add(AIPrediction(
@@ -409,27 +521,25 @@ def raise_complaint(
     ))
 
     # ── 7. Handle Duplicate / Original paths ──────────────────────────────────
-    if assigned_duplicate_id:
+    if assigned_duplicate_id and parent_complaint:
         db.add(DuplicateComplaintMapping(
             original_complaint_id=assigned_duplicate_id,
             duplicate_complaint_id=complaint.id,
-            similarity_score=0.90,
+            similarity_score=duplicate_score or 0.90,
         ))
-        complaint.status = "Closed"
-        db.add(ComplaintStatusHistory(
-            complaint_id=complaint.id,
-            status="Closed",
-            remarks=f"Citizen joined original complaint #{assigned_duplicate_id}.",
-            changed_by_user_id=current_user.id
-        ))
+        
+        # Increment parent's impact / citizen-report count
+        parent_complaint.impact_count = (parent_complaint.impact_count or 1) + 1
+        db.flush()
+
         db.add(Notification(
             user_id=current_user.id,
             complaint_id=complaint.id,
-            message=f"You joined complaint #{assigned_duplicate_id}. You will receive updates about this issue.",
+            message=f"Your report #{complaint.id} has been linked to Complaint #{assigned_duplicate_id}. Current status: {initial_status}.",
             notification_type="General",
         ))
     else:
-        # Route to department officer
+        # Route to department officer only for unique/parent complaint
         assign_officer_to_complaint(db, complaint)
 
     # ── 8. Handle Image Upload & Multimodal Evidence Verification ─────────────
@@ -581,7 +691,12 @@ def get_complaint_by_id(
     if not complaint:
         raise HTTPException(status_code=404, detail="Complaint not found")
     if current_user.role.name == "Citizen" and complaint.citizen_id != current_user.id:
-        raise HTTPException(status_code=403, detail="Not authorized to view this complaint")
+        is_linked = db.query(Complaint).filter(
+            Complaint.duplicate_of_complaint_id == complaint.id,
+            Complaint.citizen_id == current_user.id
+        ).first() is not None
+        if not is_linked:
+            raise HTTPException(status_code=403, detail="Not authorized to view this complaint")
     return serialize_complaint(complaint, db)
 
 
@@ -598,7 +713,12 @@ def get_complaint_evidence(
     if not complaint:
         raise HTTPException(status_code=404, detail="Complaint not found")
     if current_user.role.name == "Citizen" and complaint.citizen_id != current_user.id:
-        raise HTTPException(status_code=403, detail="Not authorized to view this complaint")
+        is_linked = db.query(Complaint).filter(
+            Complaint.duplicate_of_complaint_id == complaint.id,
+            Complaint.citizen_id == current_user.id
+        ).first() is not None
+        if not is_linked:
+            raise HTTPException(status_code=403, detail="Not authorized to view this complaint")
     if not complaint.evidence_check:
         raise HTTPException(status_code=404, detail="Evidence check not found for this complaint")
 
@@ -687,6 +807,25 @@ def update_complaint_status(
         message=f"Your complaint #{complaint.id} status has changed to '{new_status}'.",
         notification_type="General",
     ))
+
+    # Synchronize status to all linked child complaints
+    duplicates = db.query(Complaint).filter(
+        Complaint.duplicate_of_complaint_id == complaint.id
+    ).all()
+    for dup in duplicates:
+        dup.status = new_status
+        db.add(ComplaintStatusHistory(
+            complaint_id=dup.id,
+            status=new_status,
+            remarks=status_update.remarks or f"Status updated to '{new_status}' via parent Complaint #{complaint.id}.",
+            changed_by_user_id=current_user.id
+        ))
+        db.add(Notification(
+            user_id=dup.citizen_id,
+            complaint_id=dup.id,
+            message=f"Update on your linked report #{dup.id}: Parent issue #{complaint.id} status is now '{new_status}'.",
+            notification_type="General",
+        ))
     db.commit()
     db.refresh(complaint)
     return serialize_complaint(complaint, db)
@@ -759,20 +898,20 @@ def resolve_complaint(
         Complaint.duplicate_of_complaint_id == complaint.id
     ).all()
     for dup in duplicates:
-        if dup.status not in ("Closed", "Resolved"):
+        if dup.status != "Resolved":
             dup.status = "Resolved"
             db.add(ComplaintStatusHistory(
                 complaint_id=dup.id,
                 status="Resolved",
-                remarks=f"Auto-resolved because original complaint #{complaint.id} was resolved.",
+                remarks=f"Resolution submitted on parent Complaint #{complaint.id}.",
                 changed_by_user_id=current_user.id
             ))
             db.add(Notification(
                 user_id=dup.citizen_id,
                 complaint_id=dup.id,
                 message=(
-                    f"The issue you joined (Original #{complaint.id}) has been Resolved. "
-                    f"Your complaint #{dup.id} has also been resolved."
+                    f"The issue you reported (linked to Complaint #{complaint.id}) has been marked Resolved. "
+                    f"Your report #{dup.id} is now Resolved."
                 ),
                 notification_type="Resolution",
             ))
@@ -872,6 +1011,29 @@ def citizen_verify_resolution(
                         ),
                         notification_type="Reopen",
                     ))
+
+    # Synchronize resolution approval / reopen to linked duplicates
+    duplicates = db.query(Complaint).filter(
+        Complaint.duplicate_of_complaint_id == complaint.id
+    ).all()
+    for dup in duplicates:
+        dup.status = complaint.status
+        dup.citizen_verified = complaint.citizen_verified
+        db.add(ComplaintStatusHistory(
+            complaint_id=dup.id,
+            status=complaint.status,
+            remarks=f"Parent Complaint #{complaint.id} was {'closed after citizen verification approval' if verify_in.approve else 'reopened following citizen review'}.",
+            changed_by_user_id=current_user.id
+        ))
+        db.add(Notification(
+            user_id=dup.citizen_id,
+            complaint_id=dup.id,
+            message=(
+                f"Parent Complaint #{complaint.id} (linked to your report #{dup.id}) "
+                f"has been {'Closed' if verify_in.approve else 'Reopened for officer re-inspection'}."
+            ),
+            notification_type="General" if verify_in.approve else "Reopen",
+        ))
 
     db.commit()
     db.refresh(complaint)

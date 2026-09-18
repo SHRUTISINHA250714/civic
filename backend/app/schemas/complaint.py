@@ -128,6 +128,16 @@ class ComplaintResponse(BaseModel):
     ai_prediction: Optional[AIPredictionResponse] = None
     evidence_check: Optional[EvidenceCheckResponse] = None
     sla_summary: Optional[SLASummaryResponse] = None
+
+    # Phase 10 Duplicate Tracking & Citizen UX fields
+    is_duplicate: bool = False
+    parent_complaint_id: Optional[int] = None
+    child_report_id: Optional[int] = None
+    parent_status: Optional[str] = None
+    impact_count: int = 1
+    message: Optional[str] = None
+    parent_status_history: List[ComplaintStatusHistoryResponse] = []
+    linked_reports_count: int = 0
     
     class Config:
         from_attributes = True
@@ -135,8 +145,13 @@ class ComplaintResponse(BaseModel):
 class DuplicateWarningResponse(BaseModel):
     is_duplicate: bool
     duplicate_of_id: Optional[int] = None
+    parent_complaint_id: Optional[int] = None
     similarity_score: float
     message: str
+    parent_status: Optional[str] = None
+    parent_category: Optional[str] = None
+    parent_location: Optional[str] = None
+    impact_count: Optional[int] = 1
 
 class ComplaintStatusUpdate(BaseModel):
     status: str  # Accepted, In Progress, Resolved, Closed, Reopened
