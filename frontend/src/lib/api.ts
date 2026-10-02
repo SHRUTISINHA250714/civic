@@ -47,14 +47,21 @@ async function apiFetch(endpoint: string, options: RequestInit = {}) {
     headers
   };
   
-  const response = await fetch(`${API_BASE}${endpoint}`, config);
-  
-  if (!response.ok) {
-    const errorData = await response.json().catch(() => ({}));
-    throw new Error(errorData.detail || "Something went wrong");
+  try {
+    const response = await fetch(`${API_BASE}${endpoint}`, config);
+    
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({}));
+      throw new Error(errorData.detail || `Server returned error ${response.status}`);
+    }
+    
+    return await response.json();
+  } catch (err: any) {
+    if (err.name === "TypeError" || err.message === "Failed to fetch") {
+      throw new Error("Unable to connect to backend server at http://127.0.0.1:8000. Please ensure the backend FastAPI service is running.");
+    }
+    throw err;
   }
-  
-  return response.json();
 }
 
 export const api = {
@@ -68,25 +75,32 @@ export const api = {
   },
   
   login: async (form: FormData) => {
-    const response = await fetch(`${API_BASE}/auth/login`, {
-      method: "POST",
-      body: form // URL encoded / form data for OAuth2 request
-    });
-    
-    if (!response.ok) {
-      const errorData = await response.json().catch(() => ({}));
-      throw new Error(errorData.detail || "Authentication failed");
+    try {
+      const response = await fetch(`${API_BASE}/auth/login`, {
+        method: "POST",
+        body: form // URL encoded / form data for OAuth2 request
+      });
+      
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.detail || "Authentication failed");
+      }
+      
+      const data = await response.json();
+      tokenStorage.setToken(data.access_token);
+      tokenStorage.setUserInfo({
+        id: data.user_id,
+        name: data.name,
+        email: data.email,
+        role: data.role
+      });
+      return data;
+    } catch (err: any) {
+      if (err.name === "TypeError" || err.message === "Failed to fetch") {
+        throw new Error("Unable to connect to backend server at http://127.0.0.1:8000. Please ensure the backend FastAPI service is running.");
+      }
+      throw err;
     }
-    
-    const data = await response.json();
-    tokenStorage.setToken(data.access_token);
-    tokenStorage.setUserInfo({
-      id: data.user_id,
-      name: data.name,
-      email: data.email,
-      role: data.role
-    });
-    return data;
   },
   
   getMe: async () => {

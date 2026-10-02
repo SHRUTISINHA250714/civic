@@ -283,7 +283,7 @@ export default function OfficerDashboard() {
                       c.priority === 'Medium' ? 'text-blue-600' : 'text-slate-500'
                     }`}>{c.priority}</span>
                   </div>
-                  <p className="text-xs text-slate-500 dark:text-slate-400 line-clamp-2 mt-1">{c.description}</p>
+                  <p className="text-xs text-slate-500 dark:text-slate-400 line-clamp-2 mt-1">{c.description || "Translation unavailable"}</p>
                   
                   {/* Reopen feedback indicator */}
                   {c.status === 'Reopened' && c.citizen_feedback_remarks && (
@@ -327,17 +327,9 @@ export default function OfficerDashboard() {
                   <div>
                     <span className="text-[10px] font-bold text-slate-400 block uppercase">Translated complaint description</span>
                     <p className="text-xs text-slate-700 dark:text-slate-350 italic font-semibold mt-1 bg-slate-50 dark:bg-slate-850 p-2.5 rounded-lg border border-slate-100 dark:border-slate-800/40">
-                      "{selectedComplaint.description}"
+                      "{selectedComplaint.description || "Translation unavailable"}"
                     </p>
                   </div>
-                  {selectedComplaint.original_description && (
-                    <div>
-                      <span className="text-[10px] font-bold text-slate-400 block uppercase">Original Citizen Text</span>
-                      <p className="text-xs text-slate-500 dark:text-slate-450 mt-0.5">
-                        "{selectedComplaint.original_description}"
-                      </p>
-                    </div>
-                  )}
                   {selectedComplaint.evidence_check && (
                     <div className="bg-slate-50 dark:bg-slate-850 p-2.5 rounded-lg border border-slate-100 dark:border-slate-800/40">
                       <div className="flex items-center justify-between mb-1">

@@ -34,6 +34,36 @@ The platform is wired to four core municipal and utility agencies:
 
 ---
 
+## 🔄 Recent Updates & Changelog
+*(As of September 2026 — Infrastructure & AI Pipeline Enhancements)*
+
+### 1. Database Migration to Neon (Cloud PostgreSQL)
+- Migrated from local PostgreSQL to Neon serverless cloud PostgreSQL via `DATABASE_URL` environment configuration.
+- Implemented SSL enforcement (`sslmode=require`), production connection pooling (`pool_pre_ping`, `pool_size`, `max_overflow`, `pool_recycle`), and 3-attempt startup retry logic to gracefully handle Neon free-tier cold starts.
+- Updated project execution instructions to use Neon cloud database connections as default/recommended, retaining local PostgreSQL as a developer fallback option.
+
+### 2. Duplicate Detection Fix — Translated Text Embedding
+- Fixed a bug in `backend/app/services/duplicate.py` where duplicate detection was generating embeddings from raw, untranslated complaint text instead of translated English text.
+- Duplicate detection now reliably computes embeddings on translated English descriptions across all complaints regardless of submission language or script, with fallback handling for missing translations.
+
+### 3. Language Detection Fix — Kanglish/Hinglish Translation Bypass
+- Fixed an issue in `backend/app/services/ai.py` where `langdetect` misclassified Romanized Kanglish/Hinglish text (Kannada/Hindi written in Latin script) as English, silently skipping translation.
+- Enforced translation unless text is verified high-confidence English (`langdetect` confidence > 0.95) with zero Indic/Kanglish/Hinglish marker words or Kannada script, ensuring all mixed-language complaints are translated before classification and duplicate checking.
+
+### 4. Translation Fix — Multi-Word Kannada Phrase Matching
+- Resolved a bug in the Tier 2 local dictionary translation fallback (used when online translation is unavailable or rate-limited) where multi-word Kannada dictionary entries (e.g., "ಬೀದಿ ದೀಪ" / streetlight) failed to match due to single-word tokenization.
+- The fallback normalizer now matches multi-word phrases against full text first (longest phrases first) before single-word lookup, preventing misclassifications during fallback operation.
+
+### 5. Officer Dashboard — Translated-Only Text Display
+- Fixed an issue where the Officer Dashboard and officer-facing API endpoints exposed raw, untranslated Kannada, Hinglish, or Kanglish text to field officers.
+- Officers now view strictly translated English descriptions across all complaint queues (with fallback indicators for missing translations), while citizens continue to see their original submitted text.
+
+### 6. Category Routing Data Consistency Fix
+- Resolved data drift between hardcoded category definitions in `backend/app/services/ai.py` (`CATEGORY_HIERARCHY`) and the database-seeded `complaint_categories` table.
+- Added missing `"Lakes & Water Bodies"` (BBMP, High priority) and updated `"Distribution Feeder & Cable Fault"` to `"Streetlight Power Supply Fault"` (BESCOM, Medium priority) in-place to preserve foreign key references, confirming 1:1 parity (47 categories) across code and database.
+
+---
+
 ## 🔑 Default Test Accounts & Credentials
 
 All default test accounts are seeded via `python -m backend.app.seed`:
@@ -51,7 +81,7 @@ All default test accounts are seeded via `python -m backend.app.seed`:
 
 ## 🛠️ Prerequisites
 
-* **PostgreSQL**: Installed and running on `localhost:5432`.
+* **PostgreSQL**: Neon serverless cloud PostgreSQL database (recommended) or local PostgreSQL instance (v12+) running on `localhost:5432`.
 * **Python**: Version 3.8+ (recommended 3.10+).
 * **Node.js**: Node.js (v18+) and `npm`.
 
@@ -61,10 +91,11 @@ All default test accounts are seeded via `python -m backend.app.seed`:
 
 ### 1. Backend Setup (FastAPI)
 
-1. Open your PostgreSQL client and create the database:
-   ```sql
-   CREATE DATABASE civic_karnataka;
+1. Configure your database connection string in `.env` (pointing to Neon serverless cloud PostgreSQL or local Postgres):
+   ```env
+   DATABASE_URL=postgresql://<user>:<password>@<neon-hostname>/civic_karnataka?sslmode=require
    ```
+   *(Note: If using local PostgreSQL as developer fallback: `postgresql://user:password@localhost:5432/civic_karnataka` after running `CREATE DATABASE civic_karnataka;`)*
 2. Open a terminal in the root project folder:
    ```powershell
    # Create and activate virtual environment (Windows PowerShell)
@@ -108,3 +139,45 @@ All default test accounts are seeded via `python -m backend.app.seed`:
   ```powershell
   python backend/test_e2e.py
   ```
+
+
+Ensure your `DATABASE_URL` environment variable is set in `.env` (Neon cloud PostgreSQL or local `localhost:5432`).
+
+1️⃣ Terminal 1: Backend API (FastAPI)
+# 1. Navigate to the root directory
+cd /Users/raksh/Ishu/civic
+
+# 2. Activate the virtual environment
+source venv/bin/activate
+
+# 3. Seed the database with default departments, wards, and test users (Run this first time)
+python -m backend.app.seed
+
+# 4. Start the FastAPI development server
+uvicorn backend.app.main:app --host 127.0.0.1 --port 8000 --reload
+
+
+
+
+2️⃣ Terminal 2: Frontend Web Portal (Next.js)
+# 1. Navigate to the frontend directory
+cd /Users/raksh/Ishu/civic/frontend
+
+# 2. Install dependencies (only needed once or after updating packages)
+npm install
+
+# 3. Start the Next.js development server
+npm run dev
+
+
+
+
+Running Automated Test Suites
+cd /Users/raksh/Ishu/civic
+source venv/bin/activate
+
+# Run full 17-Phase End-to-End Workflow Verification Suite
+python backend/test_e2e.py
+
+# Run Phase 10 Duplicate Prevention & Impact Tracking Suite
+python backend/test_phase10_duplicate_ux.py

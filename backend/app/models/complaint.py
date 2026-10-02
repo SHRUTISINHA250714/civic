@@ -85,6 +85,11 @@ class Complaint(Base):
     # Self-referencing relationship for duplicate handling
     duplicates = relationship("Complaint", backref="original_complaint", remote_side=[id])
 
+    @property
+    def translated_text(self) -> str:
+        """Returns the translated/normalized English description, with fallback to original_description."""
+        return self.description or self.original_description or ""
+
 class ComplaintImage(Base):
     __tablename__ = "complaint_images"
     
