@@ -5,7 +5,7 @@ from backend.app.models.department import Department
 from backend.app.models.complaint import ComplaintCategory, SLAPolicy
 
 def seed_db():
-    print("Creating all tables in PostgreSQL...")
+    print("Connecting to PostgreSQL database and initializing tables...")
     Base.metadata.create_all(bind=engine)
     
     db = SessionLocal()
@@ -65,6 +65,7 @@ def seed_db():
             {"name": "Stray Animal & Dead Animal Removal",       "dept": "BBMP",   "priority": "Medium"},
             {"name": "Construction Debris & Road Cave-in",       "dept": "BBMP",   "priority": "High"},
             {"name": "Public Toilet & Civic Amenities",          "dept": "BBMP",   "priority": "Low"},
+            {"name": "Lakes & Water Bodies",                     "dept": "BBMP",   "priority": "High"},
             {"name": "Pothole",                                  "dept": "BBMP",   "priority": "High"},
             {"name": "Road Damage",                              "dept": "BBMP",   "priority": "Medium"},
             {"name": "Tree Fall",                                "dept": "BBMP",   "priority": "High"},
@@ -78,7 +79,7 @@ def seed_db():
             {"name": "Transformer Failure & Sparks",             "dept": "BESCOM", "priority": "Critical"},
             {"name": "Damaged Electric Poles & Broken Wires",    "dept": "BESCOM", "priority": "Critical"},
             {"name": "Exposed Wires & Electrical Hazards",       "dept": "BESCOM", "priority": "Critical"},
-            {"name": "Distribution Feeder & Cable Fault",        "dept": "BESCOM", "priority": "Medium"},
+            {"name": "Streetlight Power Supply Fault",           "dept": "BESCOM", "priority": "Medium"},
             {"name": "Electricity Meter & Billing Issues",       "dept": "BESCOM", "priority": "Low"},
             {"name": "Power Outage",                             "dept": "BESCOM", "priority": "High"},
             {"name": "Fallen Electric Wire",                     "dept": "BESCOM", "priority": "Critical"},
@@ -109,6 +110,13 @@ def seed_db():
             {"name": "Illegal Dumping",                          "dept": "BSWML",  "priority": "Medium"},
         ]
         db_cats = {}
+        # Rename legacy 'Distribution Feeder & Cable Fault' -> 'Streetlight Power Supply Fault' in-place
+        feeder_cat = db.query(ComplaintCategory).filter(ComplaintCategory.name == "Distribution Feeder & Cable Fault").first()
+        if feeder_cat:
+            print("Renaming 'Distribution Feeder & Cable Fault' -> 'Streetlight Power Supply Fault' in-place...")
+            feeder_cat.name = "Streetlight Power Supply Fault"
+            db.flush()
+
         for cat_info in categories:
             cat = db.query(ComplaintCategory).filter(ComplaintCategory.name == cat_info["name"]).first()
             if not cat:

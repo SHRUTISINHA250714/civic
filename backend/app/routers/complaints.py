@@ -107,37 +107,48 @@ def preview_complaint_ai(
 
     translated_desc, detected_lang, _ = translate_text(description)
     structured_ai = classify_complaint_structured(translated_desc)
-    predicted_priority, prio_conf = predict_priority(translated_desc, structured_ai["predicted_category_name"])
+    pred_cat_name = structured_ai.get("category_name") or structured_ai.get("predicted_category_name", "Others")
+    predicted_priority, prio_conf = predict_priority(translated_desc, pred_cat_name)
 
-    cat = db.query(ComplaintCategory).filter(ComplaintCategory.name == structured_ai["predicted_category_name"]).first()
+    cat = db.query(ComplaintCategory).filter(ComplaintCategory.name == pred_cat_name).first()
     if not cat:
         cat = db.query(ComplaintCategory).filter(ComplaintCategory.name == "Others").first()
 
-    dept_code = structured_ai["agency"]
-    dept_name = cat.department.name if cat and cat.department else structured_ai.get("agency_full_name", "Bruhat Bengaluru Mahanagara Palike")
+    dept_code = structured_ai.get("agency", "BBMP")
+    dept_name = cat.department.name if (cat and cat.department) else structured_ai.get("department_name", "Bruhat Bengaluru Mahanagara Palike")
 
     return {
         "original_text": description,
         "translated_text": translated_desc,
         "detected_language": detected_lang,
-        "agency": structured_ai["agency"],
-        "category": structured_ai["category"],
-        "subcategory": structured_ai["subcategory"],
-        "requires_image": structured_ai["requires_image"],
-        "requires_gps": structured_ai["requires_gps"],
+        "agency": dept_code,
+        "category": structured_ai.get("category", "Roads"),
+        "subcategory": structured_ai.get("subcategory", "Pothole"),
+        "requires_image": structured_ai.get("requires_image", True),
+        "requires_gps": structured_ai.get("requires_gps", True),
         "predicted_department": dept_code,
         "predicted_department_name": dept_name,
-        "predicted_category_name": cat.name if cat else structured_ai["predicted_category_name"],
+        "predicted_category_name": cat.name if cat else pred_cat_name,
         "predicted_category_id": cat.id if cat else None,
         "predicted_priority": predicted_priority,
-        "confidence": structured_ai["confidence"]
+        "confidence": structured_ai.get("confidence", 0.50)
     }
+
+
+import re
+
+def is_untranslated_script(text: Optional[str]) -> bool:
+    if not text or not text.strip():
+        return True
+    if re.search(r'[\u0C80-\u0CFF\u0900-\u097F]', text):
+        return True
+    return False
 
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Helper: Serialise a Complaint ORM object to API response dict
 # ─────────────────────────────────────────────────────────────────────────────
-def serialize_complaint(c: Complaint, db: Session) -> dict:
+def serialize_complaint(c: Complaint, db: Session, user_role: Optional[str] = None) -> dict:
     citizen_name    = c.citizen.name
     category_name   = c.category.name
     department_name = c.category.department.name
@@ -254,6 +265,14 @@ def serialize_complaint(c: Complaint, db: Session) -> dict:
         ).scalar() or 0
         impact_count = max(getattr(c, "impact_count", 1) or 1, child_count + 1)
 
+    desc = c.description
+    orig_desc = c.original_description
+
+    if user_role == "Officer":
+        orig_desc = None
+        if not desc or is_untranslated_script(desc):
+            desc = "Translation unavailable"
+
     return {
         "id":                       c.id,
         "citizen_id":               c.citizen_id,
@@ -262,8 +281,8 @@ def serialize_complaint(c: Complaint, db: Session) -> dict:
         "category_name":            category_name,
         "department_id":            department_id,
         "department_name":          department_name,
-        "description":              c.description,
-        "original_description":     c.original_description,
+        "description":              desc,
+        "original_description":     orig_desc,
         "language":                 c.language,
         "detected_language":        c.detected_language,
         "audio_url":                c.audio_url,
@@ -617,7 +636,8 @@ def raise_complaint(
 
     db.commit()
     db.refresh(complaint)
-    return serialize_complaint(complaint, db)
+    user_role = current_user.role.name if current_user and hasattr(current_user, "role") and current_user.role else None
+    return serialize_complaint(complaint, db, user_role=user_role)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -650,7 +670,8 @@ def get_complaints(
         query = query.filter(Complaint.priority == priority)
 
     complaints = query.order_by(Complaint.created_at.desc()).all()
-    return [serialize_complaint(c, db) for c in complaints]
+    user_role = current_user.role.name if current_user and hasattr(current_user, "role") and current_user.role else None
+    return [serialize_complaint(c, db, user_role=user_role) for c in complaints]
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -670,11 +691,12 @@ def get_nearby_complaints(
         Complaint.location_longitude.between(longitude - delta, longitude + delta)
     ).all()
 
+    user_role = current_user.role.name if current_user and hasattr(current_user, "role") and current_user.role else None
     nearby = []
     for c in candidates:
         dist = haversine_distance(latitude, longitude, c.location_latitude, c.location_longitude)
         if dist <= radius_meters:
-            nearby.append(serialize_complaint(c, db))
+            nearby.append(serialize_complaint(c, db, user_role=user_role))
     return nearby
 
 
@@ -697,7 +719,8 @@ def get_complaint_by_id(
         ).first() is not None
         if not is_linked:
             raise HTTPException(status_code=403, detail="Not authorized to view this complaint")
-    return serialize_complaint(complaint, db)
+    user_role = current_user.role.name if current_user and hasattr(current_user, "role") and current_user.role else None
+    return serialize_complaint(complaint, db, user_role=user_role)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -828,7 +851,8 @@ def update_complaint_status(
         ))
     db.commit()
     db.refresh(complaint)
-    return serialize_complaint(complaint, db)
+    user_role = current_user.role.name if current_user and hasattr(current_user, "role") and current_user.role else None
+    return serialize_complaint(complaint, db, user_role=user_role)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -918,7 +942,8 @@ def resolve_complaint(
 
     db.commit()
     db.refresh(complaint)
-    return serialize_complaint(complaint, db)
+    user_role = current_user.role.name if current_user and hasattr(current_user, "role") and current_user.role else None
+    return serialize_complaint(complaint, db, user_role=user_role)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1037,7 +1062,8 @@ def citizen_verify_resolution(
 
     db.commit()
     db.refresh(complaint)
-    return serialize_complaint(complaint, db)
+    user_role = current_user.role.name if current_user and hasattr(current_user, "role") and current_user.role else None
+    return serialize_complaint(complaint, db, user_role=user_role)
 
 
 # ─────────────────────────────────────────────────────────────────────────────

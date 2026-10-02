@@ -15,6 +15,20 @@ class Settings(BaseSettings):
     # Database
     DATABASE_URL: str = "postgresql://postgres:postgres@localhost:5432/civic_karnataka"
     
+    @property
+    def SQLALCHEMY_DATABASE_URI(self) -> str:
+        url = self.DATABASE_URL
+        if not url:
+            return url
+        # Fix legacy postgres:// schema prefix (e.g. from Neon) for SQLAlchemy 2.0
+        if url.startswith("postgres://"):
+            url = url.replace("postgres://", "postgresql://", 1)
+        # Enforce sslmode=require for Neon / remote PostgreSQL if not present
+        if "localhost" not in url and "127.0.0.1" not in url and "sslmode" not in url:
+            sep = "&" if "?" in url else "?"
+            url = f"{url}{sep}sslmode=require"
+        return url
+    
     # CORS Origins
     BACKEND_CORS_ORIGINS: List[str] = [
         "http://localhost:3000",

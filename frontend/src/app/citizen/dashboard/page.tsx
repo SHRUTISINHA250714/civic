@@ -539,7 +539,7 @@ export default function CitizenDashboard() {
                       <span>🔗 Linked to Parent Ticket #C-{c.parent_complaint_id || c.duplicate_of_complaint_id}</span>
                     </div>
                   )}
-                  <p className="text-xs text-slate-500 dark:text-slate-400 line-clamp-2 mt-0.5">{c.description}</p>
+                  <p className="text-xs text-slate-500 dark:text-slate-400 line-clamp-2 mt-0.5">{c.original_description || c.description}</p>
                   {c.audio_url && (
                     <span className="inline-flex items-center gap-1 mt-1 text-[10px] text-indigo-600 dark:text-indigo-400 font-semibold">
                       <Volume2 className="h-3 w-3" /> Voice Note
@@ -615,7 +615,7 @@ export default function CitizenDashboard() {
                 <div>
                   <span className="text-xs text-slate-400 font-bold">Complaint #{selectedComplaint.id}</span>
                   <h3 className="font-bold text-lg text-slate-900 dark:text-white mt-0.5">{selectedComplaint.category_name}</h3>
-                  <p className="text-xs text-slate-500 mt-1">{selectedComplaint.description}</p>
+                  <p className="text-xs text-slate-500 mt-1">{selectedComplaint.original_description || selectedComplaint.description}</p>
                 </div>
                 <span className={`text-xs px-3 py-1 rounded-full font-bold ${statusClass(selectedComplaint.status)}`}>
                   {selectedComplaint.status}

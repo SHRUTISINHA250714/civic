@@ -367,6 +367,11 @@ class PredictiveIntelligenceService:
 
     def _generate_synthetic_baseline(self):
         """Generates fallback statistical baseline if CSV is unavailable."""
+        self.cat_encoder.fit(["Garbage", "Pothole", "Water Leakage", "Streetlight", "Others"])
+        self.ward_encoder.fit(["Central", "Koramangala", "Indiranagar", "Whitefield"])
+        self.zone_encoder.fit(["East", "West", "South", "Mahadevapura", "Bommanahalli", "Yelahanka", "RR Nagar", "Dasarahalli"])
+        self.dept_encoder.fit(["BBMP", "BESCOM", "BWSSB", "BSWML"])
+        self.priority_encoder.fit(["Low", "Medium", "High", "Critical"])
         self.training_stats = {
             "trained_at": datetime.now(timezone.utc).isoformat(),
             "sample_count": 128573,
@@ -401,11 +406,11 @@ class PredictiveIntelligenceService:
         is_weekend = 1 if day_of_week in [5, 6] else 0
         zone = WARD_TO_ZONE.get(ward.lower(), "South")
 
-        cat_idx = self.cat_encoder.transform([category])[0] if category in self.cat_encoder.classes_ else 0
-        ward_idx = self.ward_encoder.transform([ward])[0] if ward in self.ward_encoder.classes_ else 0
-        zone_idx = self.zone_encoder.transform([zone])[0] if zone in self.zone_encoder.classes_ else 0
-        dept_idx = self.dept_encoder.transform([dept])[0] if dept in self.dept_encoder.classes_ else 0
-        prio_idx = self.priority_encoder.transform([priority])[0] if priority in self.priority_encoder.classes_ else 0
+        cat_idx = self.cat_encoder.transform([category])[0] if hasattr(self.cat_encoder, 'classes_') and category in self.cat_encoder.classes_ else 0
+        ward_idx = self.ward_encoder.transform([ward])[0] if hasattr(self.ward_encoder, 'classes_') and ward in self.ward_encoder.classes_ else 0
+        zone_idx = self.zone_encoder.transform([zone])[0] if hasattr(self.zone_encoder, 'classes_') and zone in self.zone_encoder.classes_ else 0
+        dept_idx = self.dept_encoder.transform([dept])[0] if hasattr(self.dept_encoder, 'classes_') and dept in self.dept_encoder.classes_ else 0
+        prio_idx = self.priority_encoder.transform([priority])[0] if hasattr(self.priority_encoder, 'classes_') and priority in self.priority_encoder.classes_ else 0
 
         feat = np.array([[
             cat_idx, ward_idx, zone_idx, dept_idx, prio_idx,

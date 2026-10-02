@@ -53,6 +53,31 @@ app.include_router(officers.router, prefix=settings.API_V1_STR)
 app.include_router(notifications.router, prefix=settings.API_V1_STR)
 app.include_router(predictive.router, prefix=settings.API_V1_STR)
 
+@app.on_event("startup")
+def startup_db_check():
+    """Startup check with retry/backoff for Neon serverless cold starts."""
+    import time
+    from sqlalchemy import text
+    from backend.app.core.database import engine
+
+    max_retries = 3
+    retry_delay = 2.0
+    for attempt in range(1, max_retries + 1):
+        try:
+            print(f"[DB Startup Check] Connecting to database (Attempt {attempt}/{max_retries})...")
+            with engine.connect() as conn:
+                conn.execute(text("SELECT 1"))
+            print("[DB Startup Check] ✓ Database connection established successfully.")
+            return
+        except Exception as e:
+            print(f"[DB Startup Check] ⚠️ Attempt {attempt} failed: {e}")
+            if attempt < max_retries:
+                print(f"[DB Startup Check] Retrying in {retry_delay}s for serverless wake-up...")
+                time.sleep(retry_delay)
+            else:
+                print("[DB Startup Check] ❌ Failed to connect to database after max retries.")
+                raise e
+
 @app.get("/")
 def read_root():
     return {

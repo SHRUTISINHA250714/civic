@@ -8,9 +8,12 @@ os.environ["TRANSFORMERS_NO_TF"] = "1"
 os.environ["USE_TORCH"] = "1"
 os.environ["TF_ENABLE_ONEDNN_OPTS"] = "0"
 
+import logging
 from typing import Tuple, Dict, Any
-from langdetect import detect
+from langdetect import detect, detect_langs
 from deep_translator import GoogleTranslator
+
+logger = logging.getLogger(__name__)
 try:
     from sentence_transformers import SentenceTransformer, util
 except Exception as e:
@@ -526,22 +529,30 @@ CATEGORY_TO_DEPARTMENT = {cat: meta["agency"] for cat, meta in CATEGORY_HIERARCH
 # Extensive Kannada & Kanglish Civic Vocabulary Mapping
 KANNADA_CIVIC_DICTIONARY = {
     # ── Potholes & Roads (BBMP) ───────────────────────
-    "ಗುಂಡಿ": "pothole road crater",
-    "ಗುಂಡಿಗಳು": "potholes road damage",
-    "ಗುಂಡಿಯಿದೆ": "pothole exists on road",
-    "ಗುಂಡಿಬಿದ್ದಿದೆ": "pothole formed on road asphalt damaged",
-    "ಗುಂಡಿಯಾಗಿದೆ": "pothole formed on street road crater",
-    "ಹಳ್ಳ": "pothole road pit",
-    "ಹೊಂಡ": "crater road hole pit",
-    "ರಸ್ತೆ": "road street",
-    "ರಸ್ತೆಯಲ್ಲಿ": "on the road street",
-    "ರಸ್ತೇಲಿ": "on the road street asphalt",
-    "ರಸ್ತೆಯ": "of the road",
+    "ಇಂದಿರಾ": "Indiranagar",
+    "ನಗರ": "Nagar",
+    "ಅಡಿ": "ft",
+    "ದೊಡ್ಡ": "severe",
+    "ಹಾಳಾಗಿದೆ": "road damaged",
+    "ಅಪಾಯಕಾರಿ": "hazard",
+    "ಬಿದ್ದಿದೆ": "formed",
+    "ಮತ್ತು": "and",
+    "ಗುಂಡಿ": "pothole",
+    "ಗುಂಡಿಗಳು": "potholes",
+    "ಗುಂಡಿಯಿದೆ": "pothole exists",
+    "ಗುಂಡಿಬಿದ್ದಿದೆ": "pothole formed",
+    "ಗುಂಡಿಯಾಗಿದೆ": "pothole formed",
+    "ಹಳ್ಳ": "pothole",
+    "ಹೊಂಡ": "crater",
+    "ರಸ್ತೆ": "road",
+    "ರಸ್ತೆಯಲ್ಲಿ": "on the road",
+    "ರಸ್ತೇಲಿ": "on the road",
+    "ರಸ್ತೆಯ": "road",
     "ರೋಡ್": "road",
-    "ಫುಟ್‌ಪಾತ್": "footpath pedestrian sidewalk",
-    "ಕಾಲುದಾರಿ": "footpath walkway",
-    "ಡಾಂಬರು": "asphalt road tar",
-    "ಕಂದಕ": "trench pit road hole",
+    "ಫುಟ್‌ಪಾತ್": "footpath",
+    "ಕಾಲುದಾರಿ": "footpath",
+    "ಡಾಂಬರು": "asphalt",
+    "ಕಂದಕ": "trench",
     "ರಸ್ತೆ ಹಾಳಾಗಿದೆ": "road is completely damaged broken asphalt",
     "ಗಟಾರ ಮುಚ್ಚಳ": "manhole cover drain lid",
     "ಮರ ಬಿದ್ದಿದೆ": "tree fallen blocking road",
@@ -610,43 +621,102 @@ KANNADA_CIVIC_DICTIONARY = {
 
 # Common Romanized Kannada / Kanglish civic keyword mapping
 KANGLISH_CIVIC_MAP = {
-    "gundi": "pothole road crater",
-    "gundigalu": "potholes road damage",
-    "gundi ide": "pothole is there on road",
-    "gundi biddide": "pothole formed deep crater",
-    "halla": "pothole pit hole",
-    "rasthe": "road street",
-    "rastheyalli": "on the road street",
-    "rasteli": "on the road asphalt",
-    "footpath": "footpath sidewalk pedestrian",
-    "kasa": "garbage waste trash bswml",
-    "kachra": "garbage waste trash dump",
-    "kachada": "garbage waste trash",
-    "waste dump": "garbage dump waste pile",
-    "smell barthide": "foul smell stinking garbage waste",
-    "current illa": "power cut electricity outage bescom",
-    "current cut": "power cut electricity outage blackout",
-    "vidyuth": "electricity power supply",
-    "wire biddide": "electric wire fallen live wire",
-    "kamba": "electric pole damaged pole",
-    "transformer spark": "transformer sparking blast",
-    "bescom": "bescom electricity department",
-    "neeru barthilla": "no water supply dry taps bwssb",
-    "neeru supply illa": "no drinking water supply dry tap",
-    "pipeline burst": "water pipeline burst leak",
-    "pipe leak": "water pipe leakage",
-    "charandi": "sewage drainage gutter overflow",
-    "gatara": "gutter sewage overflow drain",
-    "sewage": "sewage overflow gutter water",
-    "manhole": "manhole drain sewer chamber",
-    "bmtc": "bmtc public bus transport",
-    "bmtc bus": "bmtc bus public transit",
-    "bus banthilla": "bus did not arrive bus cancellation delay",
-    "bus delay": "bus delay schedule cancellation",
-    "bus stop illa": "bus stop shelter issue",
-    "light uriyalla": "streetlight not working dark road",
-    "mara biddide": "tree fallen on road storm damage",
+    "gundi": "pothole",
+    "gundigalu": "potholes",
+    "gundi ide": "pothole is on road",
+    "gundi biddide": "pothole formed crater",
+    "halla": "pothole",
+    "doddha": "severe",
+    "dodda": "severe",
+    "ide": "is",
+    "haalagide": "damaged hazard",
+    "haalaagide": "damaged hazard",
+    "halagide": "damaged hazard",
+    "rasthe": "road",
+    "raste": "road",
+    "rastheyalli": "on the road",
+    "rasteyalli": "on the road",
+    "rastele": "on the road",
+    "footpath": "footpath",
+    "kasa": "garbage",
+    "kachra": "garbage",
+    "kachada": "garbage",
+    "waste dump": "garbage dump",
+    "smell barthide": "foul smell garbage",
+    "current illa": "power outage",
+    "current cut": "power cut",
+    "vidyuth": "electricity",
+    "wire biddide": "electric wire fallen",
+    "kamba": "electric pole",
+    "transformer spark": "transformer sparking",
+    "bescom": "bescom",
+    "neeru barthilla": "no water supply",
+    "neeru supply illa": "no water supply",
+    "pipeline burst": "pipeline burst",
+    "pipe leak": "water pipe leak",
+    "charandi": "sewage overflow",
+    "gatara": "gutter drain",
+    "sewage": "sewage overflow",
+    "manhole": "manhole chamber",
+    "bmtc": "bmtc bus",
+    "bmtc bus": "bmtc bus",
+    "bus banthilla": "bus delayed",
+    "bus delay": "bus delay",
+    "bus stop illa": "bus stop issue",
+    "light uriyalla": "streetlight not working",
+    "mara biddide": "tree fallen",
 }
+
+# Common Romanized Hindi / Hinglish civic keyword mapping
+HINGLISH_CIVIC_MAP = {
+    "gaddha": "pothole",
+    "gaddhe": "potholes",
+    "bada": "severe",
+    "baddi": "severe",
+    "badi": "severe",
+    "bahut": "very",
+    "bohot": "very",
+    "bohut": "very",
+    "khatarnak": "hazard",
+    "sadak": "road",
+    "par": "on",
+    "pe": "on",
+    "mein": "in",
+    "me": "in",
+    "hai": "is",
+    "h": "is",
+    "nahi": "not",
+    "nahin": "not",
+    "nhi": "not",
+    "kya": "what",
+    "kachra": "garbage",
+    "ganda": "dirty contaminated",
+    "pani": "water",
+    "paani": "water",
+    "bijli": "electricity",
+    "gaya": "outage",
+    "gaye": "outage",
+    "aaraha": "coming",
+    "aaya": "arrived",
+    "samasya": "problem",
+    "galli": "street",
+    "rasta": "road",
+    "naali": "drain sewer",
+    "nali": "drain",
+    "khulla": "open dangerous",
+}
+
+INDIC_MARKER_WORDS = set(list(KANGLISH_CIVIC_MAP.keys()) + list(HINGLISH_CIVIC_MAP.keys()) + [
+    "hai", "h", "nahi", "nahin", "nhi", "kya", "bada", "baddha", "badi", "gaddha", "gaddhe",
+    "bahut", "bohot", "bohut", "khatarnak", "samasya", "sadak", "par", "mein", "me",
+    "ka", "ki", "ke", "ko", "se", "aur", "pe", "paani", "pani", "ganda", "kachra",
+    "bijli", "gaya", "gaye", "aaraha", "aaya", "karoo", "karo", "raha", "rahe", "rahi",
+    "gundi", "ide", "iddhe", "biddide", "biddidhe", "biddira", "swalpa", "rasteyalli",
+    "rastele", "raste", "tumba", "thumba", "nodidara", "agide", "aagide", "haalaagide",
+    "halagide", "ilva", "illva", "illa", "iradilla", "niru", "neeru", "bartha", "barilla",
+    "koodale", "kudale", "beku", "madbeku", "nodi", "kettogide", "bandh", "karet",
+    "kurentu", "myaanhollu", "gataar", "naali", "rasta", "khulla"
+])
 
 def contains_kannada_script(text: str) -> bool:
     """Checks if string contains Kannada Unicode characters (0x0C80 to 0x0CFF)."""
@@ -654,8 +724,9 @@ def contains_kannada_script(text: str) -> bool:
 
 def translate_text(text: str) -> Tuple[str, str, float]:
     """
-    Detects language (Kannada, English, Kanglish) and translates to English.
-    Provides bulletproof multi-tier fallback so offline/throttled environments never fail.
+    Detects language (Kannada, English, Kanglish, Hinglish) and translates to English.
+    Removes the language gate that skips translation when detected language is 'en'.
+    Translation runs unless text is high-confidence English with no Indic/Kanglish/Hinglish marker words.
     Returns (translated_text, detected_lang, time_taken).
     """
     start_time = time.time()
@@ -663,67 +734,118 @@ def translate_text(text: str) -> Tuple[str, str, float]:
     if not text:
         return "", "en", 0.0
 
+    # 1. Check for Kannada Unicode script
+    has_kannada_script = contains_kannada_script(text)
+    
+    # 2. Check for Indic/Kanglish/Hinglish marker words
+    words_lower = set(re.findall(r'\b\w+\b', text.lower()))
+    has_indic_markers = bool(words_lower.intersection(INDIC_MARKER_WORDS)) or \
+                         any(k in text.lower() for k in KANGLISH_CIVIC_MAP.keys()) or \
+                         any(k in text.lower() for k in HINGLISH_CIVIC_MAP.keys())
+
+    # 3. Language detection for display metadata
     detected_lang = "en"
+    high_confidence_en = False
 
-    # 1. Check if the text contains Kannada Unicode characters
-    if contains_kannada_script(text):
+    if has_kannada_script:
         detected_lang = "kn"
+    elif has_indic_markers:
+        detected_lang = "kn-en"  # Indic transliterated (Kanglish / Hinglish)
     else:
-        # Check for Romanized Kannada / Kanglish keywords
-        text_lower = text.lower()
-        if any(k in text_lower for k in KANGLISH_CIVIC_MAP.keys()):
-            detected_lang = "kn-en"  # Kanglish
-        else:
-            try:
-                detected_lang = detect(text)
-            except Exception:
-                detected_lang = "en"
-
-    translated_text = text
-
-    # If non-English (or Kannada/Kanglish), translate to English
-    if detected_lang in ["kn", "kn-en"] or detected_lang not in ["en"]:
-        # Tier 1: Try DeepTranslator / GoogleTranslator if available
-        translated_online = False
         try:
-            translator = GoogleTranslator(source='auto', target='en')
-            candidate = translator.translate(text)
-            if candidate and len(candidate.strip()) > 1 and candidate.strip() != text.strip():
-                translated_text = candidate.strip()
-                translated_online = True
+            langs = detect_langs(text)
+            if langs:
+                top_lang = langs[0]
+                detected_lang = top_lang.lang
+                if top_lang.lang == "en" and top_lang.prob > 0.95:
+                    high_confidence_en = True
         except Exception:
-            translated_online = False
+            detected_lang = "en"
 
-        # Tier 2: Apply linguistic civic dictionary normalizer (always runs to enrich translation)
-        # Check phrases and tokens in Kannada & Kanglish dictionaries
-        enriched_tokens = []
-        for word in text.split():
-            clean_word = word.strip(",.!?\"'()[]{}")
-            if clean_word in KANNADA_CIVIC_DICTIONARY:
-                enriched_tokens.append(KANNADA_CIVIC_DICTIONARY[clean_word])
-            elif clean_word.lower() in KANGLISH_CIVIC_MAP:
-                enriched_tokens.append(KANGLISH_CIVIC_MAP[clean_word.lower()])
-            else:
-                # Substring stem check for Kannada inflections (e.g. ರಸ್ತೆಯಲ್ಲಿ -> ರಸ್ತೆ, ಗುಂಡಿಬಿದ್ದಿದೆ -> ಗುಂಡಿ)
-                matched = False
-                for k_key, eng_val in KANNADA_CIVIC_DICTIONARY.items():
-                    if k_key in clean_word:
-                        enriched_tokens.append(eng_val)
-                        matched = True
-                        break
-                if not matched:
-                    enriched_tokens.append(clean_word)
+    # 4. Translation Guard:
+    # Skip translation ONLY IF langdetect reports high-confidence 'en' AND there are NO Indic/Kanglish/Hinglish markers AND no Kannada script.
+    if high_confidence_en and not has_indic_markers and not has_kannada_script:
+        return text, "en", round(time.time() - start_time, 4)
 
-        dictionary_translated = " ".join(enriched_tokens)
+    # 5. Translation Execution
+    translated_text = text
+    translated_online = False
 
-        # If online translation failed, use the rule-based translated text
-        if not translated_online or contains_kannada_script(translated_text):
-            translated_text = dictionary_translated
+    # Tier 1: Online GoogleTranslator API
+    try:
+        translator = GoogleTranslator(source='auto', target='en')
+        candidate = translator.translate(text)
+        if candidate and len(candidate.strip()) > 1 and candidate.strip().lower() != text.strip().lower():
+            translated_text = candidate.strip()
+            translated_online = True
+    except Exception as e:
+        logger.warning("Online GoogleTranslator failed (%s). Proceeding with dictionary/normalizer fallback.", e)
+        translated_online = False
+
+    # Tier 2: Linguistic civic dictionary normalizer (always enriches or falls back)
+    # Pass 1: Multi-word phrase matching on full text BEFORE single-word tokenization
+    working_text = text
+    
+    # Collect all multi-word keys (keys containing a space) across all three dictionaries
+    multi_word_pairs = []
+    for d in (KANNADA_CIVIC_DICTIONARY, KANGLISH_CIVIC_MAP, HINGLISH_CIVIC_MAP):
+        for k, v in d.items():
+            if " " in k.strip():
+                multi_word_pairs.append((k.strip(), v))
+    
+    # Sort by phrase key length descending (longest phrase first)
+    multi_word_pairs.sort(key=lambda x: len(x[0]), reverse=True)
+
+    for phrase_key, eng_val in multi_word_pairs:
+        if contains_kannada_script(phrase_key):
+            if phrase_key in working_text:
+                working_text = working_text.replace(phrase_key, f" {eng_val} ")
         else:
-            # If online translation succeeded, append key civic tokens if missing to ensure high NLP alignment
-            translated_text = f"{translated_text} ({dictionary_translated})"
+            pattern = re.compile(re.escape(phrase_key), re.IGNORECASE)
+            if pattern.search(working_text):
+                working_text = pattern.sub(f" {eng_val} ", working_text)
 
-    time_taken = time.time() - start_time
+    # Pass 2: Single-word tokenization & matching on remaining working_text
+    enriched_tokens = []
+    for word in working_text.split():
+        clean_word = word.strip(",.!?\"'()[]{}")
+        clean_lower = clean_word.lower()
+        if clean_word in KANNADA_CIVIC_DICTIONARY:
+            enriched_tokens.append(KANNADA_CIVIC_DICTIONARY[clean_word])
+        elif clean_lower in KANGLISH_CIVIC_MAP:
+            enriched_tokens.append(KANGLISH_CIVIC_MAP[clean_lower])
+        elif clean_lower in HINGLISH_CIVIC_MAP:
+            enriched_tokens.append(HINGLISH_CIVIC_MAP[clean_lower])
+        else:
+            # Substring stem check for Kannada / Indic inflections (single-word keys only)
+            matched = False
+            for k_key, eng_val in KANNADA_CIVIC_DICTIONARY.items():
+                if " " not in k_key and k_key in clean_word:
+                    enriched_tokens.append(eng_val)
+                    matched = True
+                    break
+            if not matched:
+                # Strip raw Kannada script characters if unmapped
+                clean_ascii = "".join([c for c in clean_word if not ('\u0C80' <= c <= '\u0CFF')])
+                if clean_ascii.strip():
+                    enriched_tokens.append(clean_ascii.strip())
+
+    dictionary_translated = " ".join([t for t in enriched_tokens if t.strip()])
+
+    # If online translation failed or left untranslated Kannada script, use Tier 2 dictionary translation
+    if not translated_online or contains_kannada_script(translated_text):
+        translated_text = dictionary_translated if dictionary_translated.strip() else text
+
+    # Ensure no residual Kannada script remains in final translated_text
+    if contains_kannada_script(translated_text):
+        translated_text = "".join([c for c in translated_text if not ('\u0C80' <= c <= '\u0CFF')])
+        translated_text = " ".join(translated_text.split())
+
+    if not translated_text or not translated_text.strip():
+        logger.warning("Translation yielded empty result for input '%s'. Falling back to raw text.", text)
+        translated_text = text
+
+    time_taken = round(time.time() - start_time, 4)
     return translated_text, detected_lang, time_taken
 
 def classify_complaint(text: str) -> Tuple[str, float]:
@@ -938,6 +1060,7 @@ def classify_complaint_structured(text: str) -> Dict[str, Any]:
         "department_code": agency,
         "department_name": agency_info["name"],
         "category_name": cat_name,
+        "predicted_category_name": cat_name,
     }
 
 def predict_priority(text: str, category_name: str) -> Tuple[str, float]:
