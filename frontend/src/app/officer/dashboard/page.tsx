@@ -7,7 +7,8 @@ import dynamic from 'next/dynamic';
 import { 
   ShieldAlert, LogOut, MapPin, Image as ImageIcon, 
   Loader2, Info, CheckCircle2, Clock, 
-  ClipboardCheck, User, Wrench, Calendar, ArrowRight
+  ClipboardCheck, User, Wrench, Calendar, ArrowRight,
+  Users, Volume2
 } from 'lucide-react';
 import { api, tokenStorage } from '@/lib/api';
 import { toast } from 'sonner';
@@ -277,11 +278,16 @@ export default function OfficerDashboard() {
                   </div>
                   <div className="flex items-center justify-between mt-1">
                     <h4 className="font-bold text-sm text-slate-900 dark:text-white">{c.category_name}</h4>
-                    <span className={`text-[10px] font-bold ${
-                      c.priority === 'Critical' ? 'text-red-600' :
-                      c.priority === 'High' ? 'text-amber-600' :
-                      c.priority === 'Medium' ? 'text-blue-600' : 'text-slate-500'
-                    }`}>{c.priority}</span>
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-[9px] font-bold text-purple-700 dark:text-purple-300 bg-purple-50 dark:bg-purple-950/40 px-1.5 py-0.5 rounded border border-purple-200 dark:border-purple-800 flex items-center gap-1">
+                        <Users className="h-2.5 w-2.5" /> Reported by {c.impact_count || 1} {(c.impact_count || 1) === 1 ? 'person' : 'people'}
+                      </span>
+                      <span className={`text-[10px] font-bold ${
+                        c.priority === 'Critical' ? 'text-red-600' :
+                        c.priority === 'High' ? 'text-amber-600' :
+                        c.priority === 'Medium' ? 'text-blue-600' : 'text-slate-500'
+                      }`}>{c.priority}</span>
+                    </div>
                   </div>
                   <p className="text-xs text-slate-500 dark:text-slate-400 line-clamp-2 mt-1">{c.description || "Translation unavailable"}</p>
                   
@@ -315,13 +321,26 @@ export default function OfficerDashboard() {
                     <div>
                       <span className="text-[10px] font-bold text-slate-400 block uppercase">Complaint category</span>
                       <h4 className="font-extrabold text-lg text-slate-900 dark:text-white">{selectedComplaint.category_name}</h4>
+                      <div className="mt-1.5 flex flex-wrap items-center gap-2">
+                        <span className="text-[11px] font-bold text-purple-700 dark:text-purple-300 bg-purple-50 dark:bg-purple-950/40 px-2 py-0.5 rounded-full border border-purple-200 dark:border-purple-800 flex items-center gap-1">
+                          <Users className="h-3 w-3" /> Reported by {selectedComplaint.impact_count || 1} {(selectedComplaint.impact_count || 1) === 1 ? 'person' : 'people'}
+                        </span>
+                        <span className={`text-[11px] font-bold px-2 py-0.5 rounded-full ${
+                          selectedComplaint.priority === 'Critical' ? 'bg-red-100 text-red-700 dark:bg-red-950/40 dark:text-red-400' :
+                          selectedComplaint.priority === 'High' ? 'bg-amber-100 text-amber-700 dark:bg-amber-950/40 dark:text-amber-400' :
+                          'bg-blue-100 text-blue-700 dark:bg-blue-950/40 dark:text-blue-400'
+                        }`}>
+                          {selectedComplaint.priority} Priority
+                        </span>
+                      </div>
                     </div>
                     <span className="text-[10px] font-mono bg-slate-100 dark:bg-slate-800 px-2 py-0.5 rounded uppercase font-bold text-slate-500">ID: #{selectedComplaint.id}</span>
                   </div>
                   <div>
-                    <span className="text-[10px] font-bold text-slate-400 block uppercase">Location Address</span>
-                    <span className="text-xs text-slate-800 dark:text-slate-200 font-bold block mt-0.5">
-                      {selectedComplaint.location_address || "N/A"}
+                    <span className="text-[10px] font-bold text-slate-400 block uppercase">Location Address & Context</span>
+                    <span className="text-xs text-slate-800 dark:text-slate-200 font-bold block mt-0.5 flex items-center gap-1">
+                      <MapPin className="h-3.5 w-3.5 text-blue-500 shrink-0" />
+                      <span>{selectedComplaint.location_address || "Coordinates only"}</span>
                     </span>
                   </div>
                   <div>
@@ -330,6 +349,21 @@ export default function OfficerDashboard() {
                       "{selectedComplaint.description || "Translation unavailable"}"
                     </p>
                   </div>
+
+                  {/* Multilingual Voice Note Audio Player */}
+                  {selectedComplaint.audio_url && (
+                    <div className="bg-indigo-50/80 dark:bg-indigo-950/30 p-3 rounded-lg border border-indigo-200 dark:border-indigo-800 space-y-1.5">
+                      <div className="flex items-center justify-between text-indigo-700 dark:text-indigo-300 text-xs font-bold">
+                        <span className="flex items-center gap-1.5">
+                          <Volume2 className="h-4 w-4" />
+                          <span>Original Multilingual Audio Evidence</span>
+                        </span>
+                        <span className="text-[10px] font-mono text-indigo-500 bg-indigo-100 dark:bg-indigo-900/60 px-1.5 py-0.5 rounded">Audio Clip</span>
+                      </div>
+                      <audio controls className="w-full h-8 mt-1" src={`http://127.0.0.1:8000${selectedComplaint.audio_url}`} />
+                    </div>
+                  )}
+
                   {selectedComplaint.evidence_check && (
                     <div className="bg-slate-50 dark:bg-slate-850 p-2.5 rounded-lg border border-slate-100 dark:border-slate-800/40">
                       <div className="flex items-center justify-between mb-1">
@@ -353,7 +387,7 @@ export default function OfficerDashboard() {
 
                 {/* Media columns */}
                 <div className="space-y-4">
-                  <span className="text-[10px] font-bold text-slate-400 block uppercase mb-1">Attached Media</span>
+                  <span className="text-[10px] font-bold text-slate-400 block uppercase mb-1">Attached Media Evidence</span>
                   {selectedComplaint.images && selectedComplaint.images.length > 0 ? (
                     <div className="grid grid-cols-2 gap-2">
                       {selectedComplaint.images.map((img: any) => (

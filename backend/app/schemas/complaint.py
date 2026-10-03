@@ -81,7 +81,7 @@ class CitizenVerifyResolutionRequest(BaseModel):
     feedback_remarks: Optional[str] = None
 
 class ComplaintCreate(BaseModel):
-    description: str
+    description: Optional[str] = None
     language: str = "English"  # English, Kannada, Hinglish, Voice
     location_latitude: float
     location_longitude: float

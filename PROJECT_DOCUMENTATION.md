@@ -561,6 +561,20 @@ python backend/test_e2e.py
    - Guaranteed that field officers and officer APIs strictly view translated English descriptions across all queue items, eliminating vernacular language barriers for on-site crews.
 6. **1:1 Taxonomy & Database Category Parity**:
    - Aligned all 47 categories between `backend/app/services/ai.py` (`CATEGORY_HIERARCHY`) and `backend/app/seed.py` (`complaint_categories`), resolving category drift.
+7. **Complaint Reporting Typed Address Context**:
+   - Added an editable street address / landmark input alongside live device GPS coordinates and interactive Leaflet map pin. The address provides additional location context for field dispatch while keeping high-precision device GPS capture unchanged.
+8. **Compulsory Photographic Evidence**:
+   - Enforced mandatory image upload in frontend UI validation and backend FastAPI verification. Submissions without image evidence are rejected at API entry; text descriptions and audio recordings remain strictly optional.
+9. **Explainable Hybrid Priority Scoring**:
+   - Implemented an explainable 5-factor weighted formula: $35\%$ Category Baseline Risk + $25\%$ Emergency Hazard Signals + $20\%$ Citizen Impact / Duplicate Count + $10\%$ Situation Context (e.g. proximity to hospitals, schools, metro stations) + $10\%$ AI / Evidence Confidence.
+   - UI displays *"Reported by X people"* on complaint cards and detail panels. Automatically elevates parent ticket priority and tightens SLA when multiple citizen reports link to the same parent ticket.
+   - Guaranteed strict priority overrides (`Critical` with 12h SLA) for life-safety emergencies: `fire`, `live wire / electrocution`, `flash flooding`, or `injury risk`.
+10. **Phase 5 Multimodal Audio Preservation & Playback**:
+    - Retains original multilingual citizen voice audio clips in file storage and links `audio_url` in the database.
+    - Integrated an audio player into the Officer Dashboard alongside normalized translated text so field officers can inspect the text and listen directly to the citizen's original voice clip.
+11. **Phase 10 Cross-Lingual & Wording Variation Duplicate Matching**:
+    - Enhanced duplicate detection to handle diverse phrasing and all supported regional languages (Kannada script, Romanized Kanglish, Hinglish, English) using translated English normalization + SentenceTransformers semantic embeddings + civic keyword token overlap blending + proximity bonuses.
+    - Preserves strict same-category and $\le 100\text{m}$ spatial proximity constraints, displaying linked report counts without creating redundant operational dispatches.
 
 ---
 

@@ -9,7 +9,7 @@ os.environ["USE_TORCH"] = "1"
 os.environ["TF_ENABLE_ONEDNN_OPTS"] = "0"
 
 import logging
-from typing import Tuple, Dict, Any
+from typing import Tuple, Dict, Any, Optional
 from langdetect import detect, detect_langs
 from deep_translator import GoogleTranslator
 
@@ -1063,43 +1063,144 @@ def classify_complaint_structured(text: str) -> Dict[str, Any]:
         "predicted_category_name": cat_name,
     }
 
-def predict_priority(text: str, category_name: str) -> Tuple[str, float]:
+def predict_priority(
+    text: str,
+    category_name: str,
+    impact_count: int = 1,
+    location_address: Optional[str] = None,
+    cat_conf: float = 0.85,
+    evidence_trust_score: float = 50.0
+) -> Tuple[str, float]:
     """
-    Predicts priority (Low, Medium, High, Critical) based on category defaults and urgency keywords.
+    Explainable Hybrid Priority Score (0.0 to 1.0):
+      - 35% Category Risk (Default domain severity)
+      - 25% Emergency Signals (Urgency & danger keywords)
+      - 20% Duplicate / Impact Count (Increases priority as more citizens link reports)
+      - 10% Situation Context (High-traffic roads, junctions, schools, hospitals)
+      - 10% AI / Evidence Confidence (YOLO & evidence verification trust)
+
+    Emergency Overrides:
+      Incidents involving fire, live wires, flooding, or injury risk strictly override to 'Critical'.
     """
-    text_lower = text.lower()
+    text_lower = (text or "").lower()
+    address_lower = (location_address or "").lower()
+    combined_text = f"{text_lower} {address_lower}"
 
-    critical_keywords = [
-        "manhole open", "sparking", "live wire", "broken electric wire", "transformer blast",
-        "accident", "danger", "hospital", "dead animal", "garbage burning", "fire",
-        "drinking water contaminated", "poisonous", "sinkhole", "road cave-in"
+    # ── 1. Emergency Overrides (Fire, Live Wires, Flooding, Injury Risk) ──────
+    emergency_override_keywords = [
+        # Fire
+        "fire", "burning", "toxic smoke", "smoke coming", "bonfire",
+        # Live Wires & Electrical
+        "live wire", "broken electric wire", "snapped wire", "snapped cable",
+        "sparking", "transformer blast", "transformer explosion", "sparking transformer",
+        "exposed wire", "shock hazard", "current leak",
+        # Flooding
+        "flooding", "severe flooding", "waterlogging", "rain flood", "water entering",
+        "pipeline burst", "sinkhole", "road cave-in", "canal burst", "overflowing drainage storm",
+        # Injury Risk
+        "injury", "hospital", "life threatening", "severe accident", "open manhole",
+        "manhole open", "drowning hazard", "electrocution", "fatal", "dangerous hole"
     ]
-    high_keywords = [
-        "waterlogging", "flooding", "pipeline burst", "no water supply", "power cut",
-        "blackout", "stinking", "rash driving", "cannot walk", "kids", "elderly", "deep pothole",
-        "overflowing sewage", "garbage not collected"
-    ]
+    is_emergency_override = any(kw in combined_text for kw in emergency_override_keywords)
 
-    # Category defaults
-    critical_categories = [
+    # ── 2. Category Risk Component (35%) ─────────────────────────────────────
+    critical_categories = {
         "Transformer Failure & Sparks", "Damaged Electric Poles & Broken Wires",
         "Exposed Wires & Electrical Hazards", "Damaged Manhole Cover & Missing Lid",
         "Contaminated Drinking Water", "Garbage Burning & Air Pollution", "Fallen Electric Wire"
-    ]
-    high_categories = [
+    }
+    high_categories = {
         "Potholes & Damaged Roads", "Blocked Stormwater Drains & Waterlogging", "Construction Debris & Road Cave-in",
         "Power Outage & Blackout", "Power Outage", "No Water Supply", "Water Pipeline Burst & Leakage",
         "Sewage Overflow & Gutter Water", "Blocked Sewer Line & Manhole Overflow", "Damaged Bus & Passenger Safety",
         "Unsafe Driving & Rash Driving", "Garbage Not Collected", "Overflowing Garbage Bins & Blackspots",
-        "Foul Smell & Waste Health Hazard", "Tree Fall & Dangerous Branches", "Tree Fall", "Pothole", "Water Leakage", "Sewage Overflow", "Garbage"
-    ]
+        "Foul Smell & Waste Health Hazard", "Tree Fall & Dangerous Branches", "Tree Fall", "Pothole", "Water Leakage",
+        "Sewage Overflow", "Garbage", "Lakes & Water Bodies", "Distribution Feeder & Cable Fault"
+    }
+    medium_categories = {
+        "Broken Footpaths & Walkways", "Streetlights Not Working", "Damaged Streetlights",
+        "Low Water Pressure", "Voltage Fluctuation (Low/High)", "Streetlight Power Supply Fault",
+        "Irregular Garbage Collection", "Park Maintenance & Public Gardens", "Public Toilet & Civic Amenities",
+        "Wet & Dry Waste Segregation Issues", "Stray Animal & Dead Animal Removal", "Public Toilet Maintenance & Sanitation"
+    }
 
-    if category_name in critical_categories or any(k in text_lower for k in critical_keywords):
-        return "Critical", 0.95
-    if category_name in high_categories or any(k in text_lower for k in high_keywords):
-        return "High", 0.90
-    
-    return "Medium", 0.80
+    if category_name in critical_categories:
+        category_score = 1.0
+    elif category_name in high_categories:
+        category_score = 0.75
+    elif category_name in medium_categories:
+        category_score = 0.50
+    else:
+        category_score = 0.25
+
+    # ── 3. Emergency Signals Component (25%) ─────────────────────────────────
+    if is_emergency_override:
+        emergency_signal_score = 1.0
+    else:
+        secondary_urgency = [
+            "hazard", "danger", "accident", "crater", "cannot walk", "traffic jam",
+            "blocked", "stinking", "dark road", "elderly", "kids", "children", "urgent", "deep hole"
+        ]
+        matches = sum(1 for kw in secondary_urgency if kw in combined_text)
+        if matches >= 2:
+            emergency_signal_score = 0.75
+        elif matches == 1:
+            emergency_signal_score = 0.50
+        else:
+            emergency_signal_score = 0.15
+
+    # ── 4. Duplicate / Impact Count Component (20%) ──────────────────────────
+    # Increases priority as more citizens link reports for the same problem
+    n_reports = max(1, impact_count)
+    if n_reports == 1:
+        impact_score = 0.20
+    elif n_reports == 2:
+        impact_score = 0.45
+    elif n_reports == 3:
+        impact_score = 0.70
+    elif n_reports == 4:
+        impact_score = 0.85
+    else:
+        impact_score = 1.00
+
+    # ── 5. Situation Context Component (10%) ─────────────────────────────────
+    context_keywords = [
+        "main road", "highway", "ring road", "junction", "cross", "signal",
+        "market", "school", "college", "hospital", "clinic", "bus stand",
+        "bus stop", "metro", "station", "flyover", "arterial", "traffic", "crowded"
+    ]
+    has_high_context = any(kw in combined_text for kw in context_keywords)
+    situation_score = 1.0 if has_high_context else 0.30
+
+    # ── 6. AI / Evidence Confidence Component (10%) ──────────────────────────
+    confidence_norm = float(cat_conf) if cat_conf is not None else 0.85
+    trust_norm = (float(evidence_trust_score) / 100.0) if evidence_trust_score is not None else 0.50
+    ai_confidence_score = min(1.0, max(0.20, (confidence_norm * 0.60) + (trust_norm * 0.40)))
+
+    # ── Composite Hybrid Score ────────────────────────────────────────────────
+    hybrid_score = (
+        (0.35 * category_score) +
+        (0.25 * emergency_signal_score) +
+        (0.20 * impact_score) +
+        (0.10 * situation_score) +
+        (0.10 * ai_confidence_score)
+    )
+
+    # ── Emergency Overrides strictly take precedence ──────────────────────────
+    if is_emergency_override or category_name in critical_categories:
+        return "Critical", 0.98
+
+    # Priority level mapping based on composite hybrid score
+    if hybrid_score >= 0.70:
+        priority = "Critical"
+    elif hybrid_score >= 0.50:
+        priority = "High"
+    elif hybrid_score >= 0.32:
+        priority = "Medium"
+    else:
+        priority = "Low"
+
+    return priority, round(min(0.99, max(0.60, hybrid_score)), 2)
 
 def verify_image(image_path: str, category_name: str) -> Tuple[bool, float]:
     """

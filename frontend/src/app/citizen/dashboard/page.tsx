@@ -359,15 +359,15 @@ export default function CitizenDashboard() {
   };
 
   const handleSubmitGrievance = async (duplicateOfId?: number) => {
-    if (!description && !audioFile) {
-      toast.error('Please enter a description or record a voice note.');
+    if (!imageFile) {
+      toast.error('Evidence photo is mandatory. Please capture or upload a clear photo of the civic issue.');
       return;
     }
     setIsSubmitting(true);
     const tid = toast.loading(duplicateOfId ? 'Linking to issue...' : 'Running AI pipeline & routing...');
     try {
       const fd = new FormData();
-      fd.append('description', description || 'Voice complaint');
+      fd.append('description', description || (audioFile ? 'Voice complaint' : 'Civic issue reported via photo evidence'));
       fd.append('language', audioFile ? 'Voice' : language);
       fd.append('location_latitude', latitude.toString());
       fd.append('location_longitude', longitude.toString());
@@ -523,11 +523,9 @@ export default function CitizenDashboard() {
                       )}
                     </div>
                     <div className="flex items-center gap-1.5">
-                      {c.impact_count && c.impact_count > 1 && (
-                        <span className="text-[9px] font-bold text-purple-700 dark:text-purple-300 bg-purple-50 dark:bg-purple-950/30 px-1.5 py-0.5 rounded border border-purple-200 dark:border-purple-800 flex items-center gap-0.5">
-                          <Users className="h-2.5 w-2.5" /> {c.impact_count}
-                        </span>
-                      )}
+                      <span className="text-[9px] font-bold text-purple-700 dark:text-purple-300 bg-purple-50 dark:bg-purple-950/30 px-1.5 py-0.5 rounded border border-purple-200 dark:border-purple-800 flex items-center gap-0.5">
+                        <Users className="h-2.5 w-2.5" /> Reported by {c.impact_count || 1} {(c.impact_count || 1) === 1 ? 'person' : 'people'}
+                      </span>
                       <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold uppercase ${statusClass(c.status)}`}>
                         {c.status}
                       </span>
@@ -615,7 +613,17 @@ export default function CitizenDashboard() {
                 <div>
                   <span className="text-xs text-slate-400 font-bold">Complaint #{selectedComplaint.id}</span>
                   <h3 className="font-bold text-lg text-slate-900 dark:text-white mt-0.5">{selectedComplaint.category_name}</h3>
+                  {selectedComplaint.location_address && (
+                    <p className="text-xs text-slate-600 dark:text-slate-400 mt-0.5 flex items-center gap-1">
+                      <MapPin className="h-3.5 w-3.5 text-blue-500 shrink-0" />
+                      <span>{selectedComplaint.location_address}</span>
+                    </p>
+                  )}
                   <p className="text-xs text-slate-500 mt-1">{selectedComplaint.original_description || selectedComplaint.description}</p>
+                  <div className="mt-1.5 inline-flex items-center gap-1 text-[11px] font-bold text-purple-700 dark:text-purple-300 bg-purple-50 dark:bg-purple-950/30 px-2 py-0.5 rounded-full border border-purple-200 dark:border-purple-800">
+                    <Users className="h-3 w-3" />
+                    <span>Reported by {selectedComplaint.impact_count || 1} {(selectedComplaint.impact_count || 1) === 1 ? 'person' : 'people'}</span>
+                  </div>
                 </div>
                 <span className={`text-xs px-3 py-1 rounded-full font-bold ${statusClass(selectedComplaint.status)}`}>
                   {selectedComplaint.status}
@@ -632,7 +640,7 @@ export default function CitizenDashboard() {
                     </span>
                     <span className="text-[10px] font-bold text-purple-800 dark:text-purple-200 bg-purple-100 dark:bg-purple-900/60 px-2 py-0.5 rounded-full flex items-center gap-1">
                       <Users className="h-3 w-3" />
-                      {selectedComplaint.impact_count || 1} Citizens Impacted
+                      Reported by {selectedComplaint.impact_count || 1} {(selectedComplaint.impact_count || 1) === 1 ? 'person' : 'people'}
                     </span>
                   </div>
                   <p className="text-[11px] text-purple-800 dark:text-purple-300 leading-relaxed">
@@ -824,7 +832,7 @@ export default function CitizenDashboard() {
               <div>
                 <div className="flex items-center justify-between mb-1">
                   <label className="text-xs font-bold text-slate-600 dark:text-slate-300">
-                    Issue Description * (Kannada / English / Kanglish)
+                    Issue Description (Optional if voice note or photo provided)
                   </label>
                   {isAiPreviewLoading && (
                     <span className="flex items-center gap-1 text-[11px] text-blue-600 font-semibold animate-pulse">
@@ -959,33 +967,52 @@ export default function CitizenDashboard() {
                 </select>
               </div>
 
-              {/* Location */}
-              <div>
-                <label className="block text-xs font-bold text-slate-600 dark:text-slate-300 mb-1">Location</label>
-                <div className="flex gap-2">
+              {/* Location & Address */}
+              <div className="space-y-2">
+                <div>
+                  <label className="block text-xs font-bold text-slate-600 dark:text-slate-300 mb-1">
+                    Live GPS Coordinates
+                  </label>
+                  <div className="flex gap-2">
+                    <input
+                      readOnly
+                      value={`Lat: ${latitude.toFixed(5)}, Lng: ${longitude.toFixed(5)}${gpsAccuracy ? ` (±${Math.round(gpsAccuracy)}m)` : ''}`}
+                      className="flex-1 border border-slate-200 dark:border-slate-700 bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 rounded-xl px-3 py-2 text-xs font-mono"
+                    />
+                    <button onClick={handleAutoLocate} type="button" className="bg-blue-600 hover:bg-blue-700 text-white px-3 py-2 rounded-xl text-xs font-bold flex items-center gap-1 transition">
+                      <Navigation className="h-3.5 w-3.5" /> GPS
+                    </button>
+                  </div>
+                </div>
+                <div>
+                  <label className="block text-xs font-bold text-slate-600 dark:text-slate-300 mb-1">
+                    Street Address / Landmark (Additional Location Context)
+                  </label>
                   <input
-                    readOnly
-                    value={address || `(${latitude.toFixed(4)}, ${longitude.toFixed(4)})`}
-                    className="flex-1 border border-slate-200 dark:border-slate-700 bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 rounded-xl px-3 py-2 text-xs"
+                    type="text"
+                    value={address}
+                    onChange={(e) => setAddress(e.target.value)}
+                    placeholder="e.g. 12th Main Road, Near Metro Pillar 140, Indiranagar"
+                    className="w-full border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-white rounded-xl px-3 py-2 text-xs focus:outline-none focus:ring-2 focus:ring-blue-500"
                   />
-                  <button onClick={handleAutoLocate} type="button" className="bg-blue-600 hover:bg-blue-700 text-white px-3 py-2 rounded-xl text-xs font-bold flex items-center gap-1 transition">
-                    <Navigation className="h-3.5 w-3.5" /> GPS
-                  </button>
                 </div>
               </div>
 
-              {/* Image */}
+              {/* Image (Mandatory) */}
               <div>
-                <label className="block text-xs font-bold text-slate-600 dark:text-slate-300 mb-1">Evidence Photo (Optional)</label>
-                <label className="flex flex-col items-center justify-center border-2 border-dashed border-slate-200 dark:border-slate-700 rounded-xl p-4 cursor-pointer hover:border-blue-400 dark:hover:border-blue-600 transition bg-slate-50 dark:bg-slate-800/50">
+                <label className="block text-xs font-bold text-slate-600 dark:text-slate-300 mb-1">
+                  Evidence Photo <span className="text-rose-500 font-extrabold">* (Compulsory)</span>
+                </label>
+                <label className={`flex flex-col items-center justify-center border-2 border-dashed ${!imageFile ? 'border-amber-300 dark:border-amber-600 bg-amber-50/40 dark:bg-amber-950/20' : 'border-emerald-300 dark:border-emerald-600 bg-emerald-50/30 dark:bg-emerald-950/20'} rounded-xl p-4 cursor-pointer hover:border-blue-400 dark:hover:border-blue-600 transition`}>
                   {imageFile ? (
                     <div className="flex items-center gap-2 text-sm text-emerald-700 dark:text-emerald-400 font-semibold">
                       <CheckCircle2 className="h-4 w-4" /> {imageFile.name}
                     </div>
                   ) : (
                     <>
-                      <ImageIcon className="h-6 w-6 text-slate-400 mb-1" />
-                      <span className="text-xs text-slate-500">Click to upload photo</span>
+                      <ImageIcon className="h-6 w-6 text-amber-500 mb-1" />
+                      <span className="text-xs font-bold text-slate-700 dark:text-slate-200">Click to capture / upload evidence photo *</span>
+                      <span className="text-[10px] text-slate-500">Image is mandatory for Phase 5 multimodal verification</span>
                     </>
                   )}
                   <input type="file" accept="image/*" className="hidden" onChange={(e) => e.target.files?.[0] && setImageFile(e.target.files[0])} />
@@ -1007,7 +1034,7 @@ export default function CitizenDashboard() {
                     </div>
                     {duplicateWarning.impact_count && (
                       <span className="text-[10px] font-bold text-amber-800 dark:text-amber-300 bg-amber-100 dark:bg-amber-900/60 px-2 py-0.5 rounded-full flex items-center gap-1">
-                        <Users className="h-3 w-3" /> {duplicateWarning.impact_count} Reports
+                        <Users className="h-3 w-3" /> Reported by {duplicateWarning.impact_count} {duplicateWarning.impact_count === 1 ? 'person' : 'people'}
                       </span>
                     )}
                   </div>
@@ -1036,7 +1063,7 @@ export default function CitizenDashboard() {
               {!duplicateWarning?.is_duplicate && (
                 <button
                   onClick={() => handleSubmitGrievance()}
-                  disabled={isSubmitting || (!description && !audioFile)}
+                  disabled={isSubmitting || !imageFile}
                   className="w-full bg-blue-600 hover:bg-blue-700 disabled:bg-slate-300 dark:disabled:bg-slate-700 text-white font-bold py-3 rounded-xl text-sm flex items-center justify-center gap-2 transition"
                 >
                   {isSubmitting ? (

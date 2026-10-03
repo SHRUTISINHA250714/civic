@@ -80,17 +80,18 @@ def get_departments_and_categories(db: Session = Depends(get_db)):
 # ─────────────────────────────────────────────────────────────────────────────
 @router.post("/preview-ai")
 def preview_complaint_ai(
-    description: str = Form(...),
+    description: Optional[str] = Form(None),
     db: Session = Depends(get_db)
 ):
     """
     Live AI assistance: Detects language, translates to English, predicts category,
     priority, agency, subcategory, and evidence requirements across the 4 departments.
     """
-    if not description or len(description.strip()) < 3:
+    desc = (description or "").strip()
+    if not desc or len(desc) < 3:
         return {
-            "original_text": description,
-            "translated_text": description,
+            "original_text": description or "",
+            "translated_text": description or "",
             "detected_language": "en",
             "agency": "BBMP",
             "category": "Roads",
@@ -376,7 +377,7 @@ def check_duplicate(
 # ─────────────────────────────────────────────────────────────────────────────
 @router.post("", response_model=ComplaintResponse, status_code=status.HTTP_201_CREATED)
 def raise_complaint(
-    description:        str            = Form(...),
+    description:        Optional[str]  = Form(None),
     language:           str            = Form("English"),
     location_latitude:  float          = Form(...),
     location_longitude: float          = Form(...),
@@ -390,12 +391,19 @@ def raise_complaint(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_citizen)
 ):
+    # Phase 5: Mandatory Image Evidence Check
+    if not file or not file.filename:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Evidence image is mandatory. Please capture or upload a photo of the civic issue."
+        )
+
     original_description = description
     audio_url: Optional[str] = None
     transcription_used = False
 
     # ── 0. Voice / Audio Transcription ────────────────────────────────────────
-    if audio_file:
+    if audio_file and audio_file.filename:
         audio_ext = os.path.splitext(audio_file.filename or "audio.wav")[1] or ".wav"
         audio_filename = f"audio_{uuid.uuid4()}{audio_ext}"
         os.makedirs(settings.UPLOAD_DIR, exist_ok=True)
@@ -406,11 +414,27 @@ def raise_complaint(
 
         transcribed, src = transcribe_audio(audio_path)
         if transcribed and src == "speech_recognition":
-            description = transcribed
+            if description and description.strip():
+                description = f"{description.strip()} | [Voice Note: {transcribed}]"
+            else:
+                description = transcribed
             transcription_used = True
         elif transcribed:
-            # Append to description if auto-transcription not available
-            description = f"{description} | [Voice Note: {transcribed}]"
+            if description and description.strip():
+                description = f"{description.strip()} | [Voice Note: {transcribed}]"
+            else:
+                description = transcribed
+                transcription_used = True
+
+    # Fallback if text description is omitted (text is optional)
+    if not description or not description.strip():
+        loc_hint = f" at {location_address}" if location_address and location_address.strip() else ""
+        if audio_url:
+            description = f"Civic issue reported via voice recording and photo evidence{loc_hint}."
+        else:
+            description = f"Civic issue reported via photo evidence{loc_hint}."
+        if not original_description:
+            original_description = description
 
     # ── 1. Translation and Language Detection ─────────────────────────────────
     translated_desc, detected_lang, trans_time = translate_text(description)
@@ -433,8 +457,14 @@ def raise_complaint(
         # If user explicitly chose, keep category confidence high
         cat_conf = 1.0
 
-    # ── 3. AI Priority Prediction ─────────────────────────────────────────────
-    predicted_priority, prio_conf = predict_priority(translated_desc, category.name)
+    # ── 3. AI Priority Prediction (Explainable Hybrid 5-Factor Score) ──────────
+    predicted_priority, prio_conf = predict_priority(
+        description=translated_desc,
+        category_name=category.name,
+        impact_count=1,
+        location_address=location_address,
+        ai_confidence=cat_conf
+    )
 
     # ── 4. Duplicate Detection ────────────────────────────────────────────────
     assigned_duplicate_id = duplicate_of_id
@@ -549,6 +579,27 @@ def raise_complaint(
         
         # Increment parent's impact / citizen-report count
         parent_complaint.impact_count = (parent_complaint.impact_count or 1) + 1
+        
+        # Phase 10 / Priority: Elevate parent priority with more linked reports (explainable hybrid score)
+        new_parent_prio, new_prio_conf = predict_priority(
+            description=parent_complaint.description,
+            category_name=parent_complaint.category.name if parent_complaint.category else category.name,
+            impact_count=parent_complaint.impact_count,
+            location_address=parent_complaint.location_address,
+            ai_confidence=cat_conf
+        )
+        prio_rank = {"Low": 1, "Medium": 2, "High": 3, "Critical": 4}
+        if prio_rank.get(new_parent_prio, 2) > prio_rank.get(parent_complaint.priority, 2):
+            old_prio = parent_complaint.priority
+            parent_complaint.priority = new_parent_prio
+            parent_complaint.sla_deadline = compute_sla_deadline(db, parent_complaint.category_id, new_parent_prio)
+            db.add(ComplaintStatusHistory(
+                complaint_id=parent_complaint.id,
+                status=parent_complaint.status,
+                remarks=f"Priority elevated from {old_prio} to {new_parent_prio} based on {parent_complaint.impact_count} linked citizen reports.",
+                changed_by_user_id=current_user.id
+            ))
+
         db.flush()
 
         db.add(Notification(

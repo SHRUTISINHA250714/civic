@@ -35,6 +35,17 @@ def haversine_distance(lat1: float, lon1: float, lat2: float, lon2: float) -> fl
     earth_radius = 6371000.0
     return c * earth_radius
 
+STOPWORDS = {
+    "the", "is", "at", "which", "on", "a", "an", "and", "or", "in", "for", "to", "of",
+    "it", "this", "there", "please", "very", "near", "opposite", "from", "with", "by",
+    "sir", "madam", "bengaluru", "bangalore", "area"
+}
+
+def extract_civic_keywords(text: str) -> set:
+    """Extracts non-stopword content tokens to assist wording-variation semantic matching."""
+    words = [w.strip(",.!?\"'()[]{}").lower() for w in text.split()]
+    return {w for w in words if len(w) > 2 and w not in STOPWORDS}
+
 def check_duplicate_complaint(
     db: Session,
     latitude: float,
@@ -45,12 +56,15 @@ def check_duplicate_complaint(
     similarity_threshold: float = 0.85
 ) -> Tuple[bool, Optional[int], float]:
     """
-    Checks if a complaint is a duplicate of an existing active complaint using translated English text embeddings.
+    Checks if a complaint is a duplicate of an existing active complaint:
+      1. Same-category constraint.
+      2. Haversine spatial proximity (within distance_threshold_m, default 100m).
+      3. Cross-lingual semantic matching handling wording variations across Kannada, Kanglish, Hinglish, and English.
     Returns (is_duplicate, duplicate_of_complaint_id, similarity_score).
     """
     # Safeguard 1: Translate incoming text to standard English first
     translated_input = None
-    if description:
+    if description and description.strip():
         try:
             translated_input, _, _ = translate_text(description)
         except Exception as e:
@@ -101,12 +115,22 @@ def check_duplicate_complaint(
             
             if encoder_model and new_embedding is not None and candidate_text.strip():
                 cand_embedding = encoder_model.encode(candidate_text, convert_to_tensor=True)
-                score = util.cos_sim(new_embedding, cand_embedding)[0][0].item()
-                similarity = max(0.0, min(1.0, score))
+                cos_score = util.cos_sim(new_embedding, cand_embedding)[0][0].item()
+                cos_score = max(0.0, min(1.0, cos_score))
+
+                # Handle wording variations & phrasing variants via civic token blending
+                kw1 = extract_civic_keywords(translated_input)
+                kw2 = extract_civic_keywords(candidate_text)
+                token_sim = (len(kw1.intersection(kw2)) / max(1, len(kw1.union(kw2)))) if (kw1 or kw2) else 0.0
+
+                # Proximity boost for complaints on the exact same road stretch (<= 40m)
+                proximity_bonus = (0.05 * (1.0 - (dist / distance_threshold_m))) if dist <= 40.0 else 0.0
+                combined_score = max(cos_score, (0.80 * cos_score) + (0.20 * token_sim) + proximity_bonus)
+                similarity = max(0.0, min(1.0, combined_score))
             else:
                 # Text fallback - Jaccard index / word intersection
-                w1 = set(translated_input.lower().split())
-                w2 = set(candidate_text.lower().split())
+                w1 = extract_civic_keywords(translated_input)
+                w2 = extract_civic_keywords(candidate_text)
                 if w1 or w2:
                     similarity = len(w1.intersection(w2)) / len(w1.union(w2))
             

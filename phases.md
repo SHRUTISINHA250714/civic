@@ -176,20 +176,26 @@ flowchart TD
 ```mermaid
 flowchart TD
     Citizen["Citizen Input Screen"] --> Forms["Multimodal Form Inputs"]
-    Forms --> Text["Text Description\n(Kannada / English / Hinglish)"]
-    Forms --> Audio["Voice Audio Capture\n(MediaRecorder Web API)"]
-    Forms --> GPS["Device GPS Geolocation\n+ Leaflet Map Pin"]
-    Forms --> Photo["Camera / Photo Upload\n(EXIF Metadata Preservation)"]
-    Text --> Payload["Multipart Form Submit\nPOST /api/v1/complaints"]
-    Audio --> Payload
+    Forms --> Photo["Camera / Photo Upload\n(Compulsory Evidence)"]
+    Forms --> Addr["Typed Street Address\n(Additional Location Context)"]
+    Forms --> GPS["Device GPS Geolocation\n+ Leaflet Map Pin (Live GPS)"]
+    Forms --> Text["Text Description (Optional)\n(Kannada / English / Hinglish)"]
+    Forms --> Audio["Voice Audio Capture (Optional)\n(MediaRecorder Web API)"]
+    Photo --> Payload["Multipart Form Submit\nPOST /api/v1/complaints"]
+    Addr --> Payload
     GPS --> Payload
-    Photo --> Payload
+    Text --> Payload
+    Audio --> Payload
+    Payload --> Storage["Audio & Media Storage\n(Preserve Original Audio Clip & Translated Text for Officers)"]
 ```
 
 #### How It Works (Short Description)
-* Provides a citizen-facing portal (`/report`) supporting text in multiple regional languages, audio voice recording, live GPS coordinate capture, and photographic evidence.
-* Captures high-precision geolocation via browser Geolocation API and synchronizes with an interactive Leaflet map pin.
-* **Key Files**: `frontend/src/app/report/page.tsx`, `backend/app/routers/complaints.py`.
+* Provides a citizen-facing portal (`/report` and `/citizen/dashboard`) supporting multimodal inputs:
+  1. **Mandatory Evidence Photo**: Photographic evidence is compulsory for AI verification and hard-gate checks. Submissions without image evidence are rejected at both frontend validation and backend API entry.
+  2. **Typed Street Address & Live GPS**: Citizens can type street addresses or landmarks as additional location context while keeping high-precision device GPS capture and Leaflet interactive map pinning unchanged.
+  3. **Optional Text & Multilingual Voice**: Text descriptions and voice notes are optional. If text is omitted, the system falls back gracefully to voice transcriptions or structured photo evidence markers.
+  4. **Multilingual Audio Preservation**: The original audio recording is securely saved and linked (`audio_url`). Field officers can read the normalized translated text and listen directly to the original citizen audio clip in the Officer Dashboard.
+* **Key Files**: `frontend/src/app/citizen/dashboard/page.tsx`, `frontend/src/app/officer/dashboard/page.tsx`, `backend/app/routers/complaints.py`.
 
 ---
 
@@ -230,17 +236,26 @@ flowchart TD
     Embed --> Sim["Cosine Similarity Matrix against\n47 Category Class Anchors"]
     Sim --> TopClass["Predicted Complaint Category\n+ Confidence Score (0.0-1.0)"]
     
-    Text --> Rules["Emergency Keywords & Municipal Routing Rules\n(Streetlight ➔ BBMP, Sparking ➔ BESCOM,\nAccident, Flood, Fire, Live Wire)"]
-    TopClass --> Priority["Priority Determinant:\nCritical (12h) | High (24h) | Medium (48h) | Low (72h)"]
-    Rules --> Priority
+    Text --> EmCheck{"Emergency Override Signals?\n(Fire, Live Wires, Flooding, Injury Risk)"}
+    EmCheck -->|Yes - Life/Safety Hazard| EmCrit["CRITICAL Priority Override\n(Instant 12h SLA)"]
+    
+    EmCheck -->|No| Hybrid["Explainable Hybrid Score Engine\n• 35% Category Risk\n• 25% Emergency Signals\n• 20% Impact / Duplicate Count\n• 10% Situation Context\n• 10% AI / Evidence Confidence"]
+    TopClass --> Hybrid
+    Hybrid --> Priority["Calculated Priority Level:\nCritical (>=0.75) | High (>=0.52) | Medium (>=0.30) | Low (<0.30)"]
+    Priority --> Display["Show 'Reported by X people'\nElevate Parent Priority on Linked Reports"]
 ```
 
 #### How It Works (Short Description)
 * Uses SentenceTransformer (`all-MiniLM-L6-v2`) to produce 384-dimensional dense semantic embeddings of the normalized English complaint text.
 * Classifies the text into one of **47 standardized civic categories** by calculating maximum cosine similarity against pre-computed category anchor vectors.
-* Applies domain routing overrides (e.g., municipal streetlighting and dark roads strictly route to BBMP, whereas transformer sparking and power supply faults route to BESCOM).
-* Assesses severity using category risk weights and emergency keyword detection to assign priority: `Critical` (12h SLA), `High` (24h), `Medium` (48h), or `Low` (72h).
-* **Key Files**: `backend/app/services/ai.py` (`classify_complaint`, `predict_priority`).
+* **Explainable Hybrid Priority Score (0.0 - 1.0)**: Computes priority using an objective 5-factor weighted formula:
+  1. **35% Category Baseline Risk**: Inherited from departmental risk weighting (high-voltage electricity, sewer collapses, water contamination vs. cosmetic issues).
+  2. **25% Emergency Signal Score**: Detected hazard keywords (sparks, fumes, sinkhole, toxic, collapsing, explosion).
+  3. **20% Duplicate / Citizen Impact Count**: Multi-reporter escalation ($\text{score} = \min(1.0, 0.20 \times \text{impact\_count})$). Displays *"Reported by X people"* on UI cards and automatically elevates parent priority when additional citizens report the same issue.
+  4. **10% Situation Context**: Sensitive location modifiers (proximity to hospitals, schools, metro stations, arterial highways, or junctions).
+  5. **10% AI / Evidence Confidence**: Model certainty and image verification agreement score.
+* **Strict Emergency Priority Overrides**: Submissions indicating immediate life-safety hazards (e.g. `fire`, `live wire / electrocution`, `severe flash flooding / drowning`, or `injury risk / open trench`) bypass scoring and are permanently locked to `Critical` priority (12h SLA).
+* **Key Files**: `backend/app/services/ai.py` (`classify_complaint`, `predict_priority`), `backend/app/routers/complaints.py`.
 
 ---
 
@@ -343,25 +358,26 @@ flowchart TD
 #### Flowchart
 ```mermaid
 flowchart TD
-    New["New Incoming Complaint\n(Lat, Lon, Category, Description)"] --> Trans["Translate Description to English\n(Guarantees Cross-Language Match)"]
+    New["New Incoming Complaint\n(Lat, Lon, Category, Description)"] --> Trans["Tier 1/2 Cross-Lingual Translation & Normalization\n(Kannada, Kanglish, Hinglish ➔ Standard English)"]
     Trans --> Active["Query Active Tickets in Same Category\n(Registered, Accepted, In Progress, Reopened)"]
     Active --> Radius["Haversine Proximity Filter\n(Spherical Distance <= 100m)"]
-    Radius -->|Within 100m| VectorSim["Compute SentenceTransformer\nCosine Similarity on Translated Text"]
+    Radius -->|Within 100m| BlendSim["Cross-Lingual & Wording Variation Semantic Match\n• 80% Dense Embedding Cosine Similarity (all-MiniLM-L6-v2)\n• 20% Civic Keyword Token Overlap (extract_civic_keywords)\n• Proximity Confidence Bonus (<= 40m)"]
     Radius -->|Outside 100m| Unique["Mark as Unique Ticket"]
     
-    VectorSim --> Check{"Cosine Similarity >= 0.85?"}
-    Check -->|Yes - Duplicate| Merge["Link as Child Duplicate to Parent Ticket\n(Set duplicate_of_complaint_id)\n(Increment Parent impact_count)"]
+    BlendSim --> Check{"Blended Score >= 0.82?"}
+    Check -->|Yes - Duplicate| Merge["Link as Child Duplicate to Parent Ticket\n(Set duplicate_of_complaint_id)\n(Increment Parent impact_count)\n(Re-evaluate & Elevate Parent Priority)"]
     Check -->|No - Substantially Different| Unique
 ```
 
 #### How It Works (Short Description)
-* Eliminates redundant work orders for the same incident (e.g. multiple citizens reporting the same water main burst or road crater) across language boundaries.
-* **Translated English Embedding Guarantee**: Generates embeddings strictly from translated English descriptions (`candidate.description` / `candidate.translated_text`), preventing duplicate detection failures when one report is submitted in Kannada script, another in Romanized Kanglish, and a third in English.
-* Applies a dual-gate screening algorithm:
-  1. **Geospatial Proximity**: Filters active grievances within a 100-meter radius using the spherical Haversine formula.
-  2. **Semantic Similarity**: Computes dense vector cosine similarity using `all-MiniLM-L6-v2`.
-* If similarity score $\ge 0.85$, links the incoming report as a child duplicate of the master ticket (`duplicate_of_complaint_id`), increments the parent ticket's `impact_count`, and prevents redundant field dispatches.
-* **Key Files**: `backend/app/services/duplicate.py`, `backend/test_kanglish_duplicate.py`, `backend/test_multilingual_duplicate.py`, `backend/test_phase10_duplicate_ux.py`.
+* Eliminates redundant work orders for the same incident (e.g. multiple citizens reporting the same water main burst or road crater) across language boundaries and diverse phrasing variations.
+* **Cross-Lingual & Wording Variation Embedding Match**:
+  1. Translates incoming text in any supported language (pure Kannada script, Romanized Kanglish, Hinglish, or English) to normalized English first.
+  2. Extracts domain civic keywords (`extract_civic_keywords`), stripping stopwords to protect against differing phrasing styles (e.g. *"gundi biddide"* vs *"dangerous crater pothole"*).
+  3. Blends dense SentenceTransformer semantic similarity ($80\%$) with keyword token Jaccard similarity ($20\%$), augmented with a spatial proximity bonus for complaints within 40m.
+* **Spatial & Same-Category Constraint**: Retains the strict requirement that grievances must belong to the same civic category and fall within a 100-meter radius via Haversine distance.
+* **Parent Impact & Escalation**: Increments the parent ticket's `impact_count`, displays *"Reported by X people"* across Citizen and Officer dashboards, and automatically elevates the parent ticket's priority and SLA if the aggregated impact count warrants it.
+* **Key Files**: `backend/app/services/duplicate.py`, `backend/test_kanglish_duplicate.py`, `backend/test_multilingual_duplicate.py`, `backend/test_enhancements.py`.
 
 ---
 
