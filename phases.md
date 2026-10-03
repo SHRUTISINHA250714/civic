@@ -134,14 +134,16 @@ flowchart TD
     Auth --> Hash["Bcrypt Password Hashing\n& Verification"]
     Hash --> JWT["Generate Signed\nJWT Bearer Token"]
     JWT --> Guards["FastAPI Role Dependencies\n(get_current_active_user)"]
-    Guards --> DB[(PostgreSQL Database\nusers, roles, officers)]
+    Guards --> DB[(Neon Serverless Cloud PostgreSQL\nusers, roles, officers, complaints)]
+    DB --> Pool["Connection Pool & SSL Engine\npool_pre_ping, pool_recycle=300s,\nsslmode=require, 3-Attempt Startup Retry"]
 ```
 
 #### How It Works (Short Description)
-* Implements relational schema management using SQLAlchemy 2.0 with PostgreSQL.
+* Implements relational schema management using SQLAlchemy 2.0 with **Neon serverless cloud PostgreSQL** as the primary production-grade database, with local PostgreSQL retained as a developer fallback.
+* Enforces SSL encryption (`sslmode=require`), connection pooling resilience (`pool_pre_ping=True`, `pool_recycle=300`, `pool_size=10`, `max_overflow=20`), and an automated 3-attempt exponential startup retry to handle serverless cold starts gracefully.
 * Secures citizen and officer identity with Bcrypt password hashing and OAuth2 JWT tokens.
 * Enforces role-based permissions: Citizens can only access their own filings, Officers access assigned field cases, and Admins oversee city-wide operations.
-* **Key Files**: `backend/app/models/user.py`, `backend/app/routers/auth.py`, `backend/app/core/security.py`.
+* **Key Files**: `backend/app/models/user.py`, `backend/app/core/database.py`, `backend/app/routers/auth.py`, `backend/test_neon_connection.py`.
 
 ---
 
@@ -150,17 +152,21 @@ flowchart TD
 #### Flowchart
 ```mermaid
 flowchart TD
-    Seed["Database Seeder\n(seed.py)"] --> Agencies["Initialize 4 State Agencies\n(BBMP, BESCOM, BWSSB, BSWML)"]
-    Agencies --> Zones["Register 8 Bengaluru Zones\n(East, West, South, Mahadevapura, etc.)"]
-    Zones --> Wards["Map 198 Wards & Categories"]
-    Wards --> Staff["Seed Pre-assigned Department Officers"]
+    Seed["Database Seeder\n(seed.py)"] --> Agencies["Initialize 4 State Civic Authorities\n(BBMP, BESCOM, BWSSB, BSWML)"]
+    Agencies --> Zones["Register 8 Bengaluru Civic Zones\n(East, West, South, Mahadevapura, etc.)"]
+    Zones --> Categories["Map 47 Standard Categories\n(1:1 Parity with AI Hierarchy)"]
+    Categories --> Staff["Seed Pre-assigned Department Officers\n(Least-Load Balancing Ready)"]
 ```
 
 #### How It Works (Short Description)
-* Seeds the spatial and departmental administrative hierarchy of Karnataka and Bengaluru.
-* Binds grievance categories to responsible authorities (e.g. *Potholes & Roads* &rarr; **BBMP**, *Power & Outages* &rarr; **BESCOM**, *Water & Sewerage* &rarr; **BWSSB**, *Solid Waste Management* &rarr; **BSWML**).
-* Populates initial test officers across all 8 civic zones for load testing.
-* **Key Files**: `backend/app/seed.py`, `backend/app/models/department.py`.
+* Seeds the spatial and departmental administrative hierarchy of Karnataka and Bengaluru across the **4 core municipal authorities**:
+  1. **BBMP** (*Bruhat Bengaluru Mahanagara Palike*) &rarr; Roads, potholes, footpaths, stormwater drains (`Rajakaluves`), municipal streetlights, trees, lakes, and parks.
+  2. **BESCOM** (*Bangalore Electricity Supply Company*) &rarr; Power outages, voltage fluctuations, sparking transformers, snapped wires, and electric utility poles.
+  3. **BWSSB** (*Bangalore Water Supply and Sewerage Board*) &rarr; Water supply failures, pipe bursts, contaminated drinking water, and sewage/manhole overflows.
+  4. **BSWML** (*Bengaluru Solid Waste Management Limited*) &rarr; Door-to-door collection delays, garbage blackspots, overflowing bins, open trash burning, and C&D waste.
+* Enforces **1:1 parity across 47 standardized civic categories** between database records (`complaint_categories`) and code taxonomy (`CATEGORY_HIERARCHY`), resolving historical category drift.
+* Populates initial test officers across all 8 civic zones for automated routing and load testing.
+* **Key Files**: `backend/app/seed.py`, `backend/app/models/department.py`, `backend/app/services/ai.py`.
 
 ---
 
@@ -192,18 +198,25 @@ flowchart TD
 #### Flowchart
 ```mermaid
 flowchart TD
-    Raw["Raw Input Data"] --> LangCheck{"Detect Language\n(Kannada / Hinglish / English)"}
-    LangCheck -->|Kannada / Hinglish| Trans["Indic / Google Translate\nPipeline"]
-    LangCheck -->|English| Clean["Text Sanitization & Normalization"]
-    Trans --> Clean
-    Clean --> Store["Store Dual Formats\n(original_description + normalized description)"]
-    Store --> Next["Feed to NLP Classification"]
+    Raw["Raw Input Description\n(Text or Speech Audio)"] --> Detect["Language Detection & Kanglish Guard\n(langdetect + Indic Marker Dictionary)"]
+    Detect --> Check{"Verified English > 0.95 &\nZero Indic Markers?"}
+    Check -->|No - Needs Translation| Tier1["Tier 1: Online Google Translate API\n(deep_translator)"]
+    Check -->|Yes - True English| Clean["Sanitization & Text Normalization"]
+    Tier1 --> ScriptCheck{"Translation Succeeded &\nZero Residual Kannada Script?"}
+    ScriptCheck -->|Yes| Clean
+    ScriptCheck -->|No / Offline| Tier2["Tier 2: Local Indic Civic Normalizer\n• Longest-First Multi-Word Phrase Matching\n• Stemming & Script Removal"]
+    Tier2 --> Clean
+    Clean --> DualStore["Dual-Field Preservation in DB:\n• original_description = Citizen Verbatim Text\n• description = Normalized English Translation"]
+    DualStore --> Downstream["Feed to NLP Embeddings, Duplicate AI & Officer Queues"]
 ```
 
 #### How It Works (Short Description)
-* Normalizes multilingual inputs (Kannada, Hinglish, regional slang) into clean English text optimized for NLP models while preserving the citizen's original verbatim text.
-* Stores voice audio recordings securely in static storage for officer review.
-* **Key Files**: `backend/app/services/translation.py`.
+* Employs an intelligent **2-tier translation and transliteration pipeline** designed specifically for Karnataka's linguistic diversity (Kannada script, Romanized Kanglish, Hinglish, English):
+  1. **High-Precision Kanglish / Hinglish Detection Guard**: Prevents Romanized vernacular text from bypassing translation due to false-positive English detection (`langdetect` English confidence must exceed 0.95 with zero Indic marker words).
+  2. **Tier-1 Online Translation Engine**: Leverages `deep_translator` with Google Translator for natural, high-accuracy cross-language normalization.
+  3. **Tier-2 Offline Local Dictionary Fallback**: Evaluates longest multi-word Kannada phrases first (e.g. `"ಬೀದಿ ದೀಪ"` &rarr; `"streetlight"`, `"ರಸ್ತೆ ಹಾಳಾಗಿದೆ"` &rarr; `"road is completely damaged"`) before single tokens, eliminating residual native script.
+* **Dual-Field Non-Destructive Storage**: Preserves the citizen's original statement verbatim in `original_description` while storing the normalized English text in `description` for AI classification, vector embeddings, and field officer presentation.
+* **Key Files**: `backend/app/services/ai.py` (`translate_text`), `backend/test_kanglish_duplicate.py`, `backend/test_multilingual_duplicate.py`, `backend/test_multiword_phrase_translation.py`.
 
 ---
 
@@ -212,21 +225,22 @@ flowchart TD
 #### Flowchart
 ```mermaid
 flowchart TD
-    Text["Normalized Description"] --> ST["SentenceTransformer Model\n(all-MiniLM-L6-v2)"]
+    Text["Normalized English Description"] --> ST["SentenceTransformer Model\n(all-MiniLM-L6-v2)"]
     ST --> Embed["384-Dim Semantic Embedding Vector"]
-    Embed --> Sim["Cosine Similarity Matrix against\n20 Category Class Anchors"]
+    Embed --> Sim["Cosine Similarity Matrix against\n47 Category Class Anchors"]
     Sim --> TopClass["Predicted Complaint Category\n+ Confidence Score (0.0-1.0)"]
     
-    Text --> Rules["Emergency Keywords Engine\n(spark, flood, accident, danger)"]
-    TopClass --> Priority["Priority Determinant:\nCritical | High | Medium | Low"]
+    Text --> Rules["Emergency Keywords & Municipal Routing Rules\n(Streetlight ➔ BBMP, Sparking ➔ BESCOM,\nAccident, Flood, Fire, Live Wire)"]
+    TopClass --> Priority["Priority Determinant:\nCritical (12h) | High (24h) | Medium (48h) | Low (72h)"]
     Rules --> Priority
 ```
 
 #### How It Works (Short Description)
-* Uses SentenceTransformer (`all-MiniLM-L6-v2`) to produce 384-dimensional dense semantic embeddings of the complaint text.
-* Classifies the text into one of 20 civic categories by calculating maximum cosine similarity against pre-computed category anchor vectors.
+* Uses SentenceTransformer (`all-MiniLM-L6-v2`) to produce 384-dimensional dense semantic embeddings of the normalized English complaint text.
+* Classifies the text into one of **47 standardized civic categories** by calculating maximum cosine similarity against pre-computed category anchor vectors.
+* Applies domain routing overrides (e.g., municipal streetlighting and dark roads strictly route to BBMP, whereas transformer sparking and power supply faults route to BESCOM).
 * Assesses severity using category risk weights and emergency keyword detection to assign priority: `Critical` (12h SLA), `High` (24h), `Medium` (48h), or `Low` (72h).
-* **Key Files**: `backend/app/services/ai_classifier.py`.
+* **Key Files**: `backend/app/services/ai.py` (`classify_complaint`, `predict_priority`).
 
 ---
 
@@ -329,23 +343,25 @@ flowchart TD
 #### Flowchart
 ```mermaid
 flowchart TD
-    New["New Incoming Complaint"] --> Active["Query Active Tickets in Category"]
-    Active --> Radius["Haversine Proximity Filter\n(Distance within 100m)"]
-    Radius -->|Within 100m| VectorSim["Compute SentenceTransformer\nCosine Similarity"]
+    New["New Incoming Complaint\n(Lat, Lon, Category, Description)"] --> Trans["Translate Description to English\n(Guarantees Cross-Language Match)"]
+    Trans --> Active["Query Active Tickets in Same Category\n(Registered, Accepted, In Progress, Reopened)"]
+    Active --> Radius["Haversine Proximity Filter\n(Spherical Distance <= 100m)"]
+    Radius -->|Within 100m| VectorSim["Compute SentenceTransformer\nCosine Similarity on Translated Text"]
     Radius -->|Outside 100m| Unique["Mark as Unique Ticket"]
     
-    VectorSim --> Check{"Similarity >= 0.85?"}
-    Check -->|Yes| Merge["Link as Child Duplicate to Parent Ticket\n(Increment Upvote / Impact Count)"]
-    Check -->|No| Unique
+    VectorSim --> Check{"Cosine Similarity >= 0.85?"}
+    Check -->|Yes - Duplicate| Merge["Link as Child Duplicate to Parent Ticket\n(Set duplicate_of_complaint_id)\n(Increment Parent impact_count)"]
+    Check -->|No - Substantially Different| Unique
 ```
 
 #### How It Works (Short Description)
-* Eliminates redundant work orders for the same incident (e.g. 50 citizens reporting the same water burst or pothole).
+* Eliminates redundant work orders for the same incident (e.g. multiple citizens reporting the same water main burst or road crater) across language boundaries.
+* **Translated English Embedding Guarantee**: Generates embeddings strictly from translated English descriptions (`candidate.description` / `candidate.translated_text`), preventing duplicate detection failures when one report is submitted in Kannada script, another in Romanized Kanglish, and a third in English.
 * Applies a dual-gate screening algorithm:
-  1. **Geospatial Proximity**: Filters active grievances within a 100-meter radius using the Haversine formula.
-  2. **Semantic Similarity**: Computes cosine similarity of SentenceTransformer embeddings.
-* If similarity score &ge; 0.85, associates the new report as a child duplicate of the master ticket, avoiding duplicate dispatches.
-* **Key Files**: `backend/app/services/duplicate.py`.
+  1. **Geospatial Proximity**: Filters active grievances within a 100-meter radius using the spherical Haversine formula.
+  2. **Semantic Similarity**: Computes dense vector cosine similarity using `all-MiniLM-L6-v2`.
+* If similarity score $\ge 0.85$, links the incoming report as a child duplicate of the master ticket (`duplicate_of_complaint_id`), increments the parent ticket's `impact_count`, and prevents redundant field dispatches.
+* **Key Files**: `backend/app/services/duplicate.py`, `backend/test_kanglish_duplicate.py`, `backend/test_multilingual_duplicate.py`, `backend/test_phase10_duplicate_ux.py`.
 
 ---
 
@@ -376,7 +392,9 @@ flowchart TD
 #### Flowchart
 ```mermaid
 flowchart TD
-    Reg["Status: Registered\n(Officer Receives Notification)"] --> Accept["Officer Clicks 'Accept Case'\nStatus ➔ Accepted"]
+    Reg["Status: Registered\n(Officer Receives Notification)"] --> View["Officer Opens Dashboard Queue\n(/officer/dashboard)"]
+    View --> TransView["Enforce Translated-Only Display\n(Officer views strictly translated English,\npreventing language barriers on site)"]
+    TransView --> Accept["Officer Clicks 'Accept Case'\nStatus ➔ Accepted"]
     Accept --> Prog["Field Crew Dispatched\nStatus ➔ In Progress"]
     Prog --> Fix["Remediation Work Executed on Site"]
     Fix --> Proof["Officer Uploads 'After' Photo Proof\n+ Descriptive Remediation Notes"]
@@ -385,9 +403,10 @@ flowchart TD
 
 #### How It Works (Short Description)
 * Provides a mobile-responsive dashboard for field officers (`/officer/dashboard`).
+* **Enforced Translated-Only English Display**: Field officers and officer-facing endpoints (`/api/v1/officers/assigned-complaints`) strictly serve translated English descriptions to prevent language and dialect confusion for field crews on site, while citizens continue viewing their original native text in the citizen portal.
 * Enforces an immutable progression sequence: `Registered` &rarr; `Accepted` &rarr; `In Progress` &rarr; `Resolved`.
 * Strict resolution policy requires uploading photographic proof of resolution and entering remediation notes before a case can be marked resolved.
-* **Key Files**: `frontend/src/app/officer/dashboard/page.tsx`, `backend/app/routers/complaints.py`.
+* **Key Files**: `frontend/src/app/officer/dashboard/page.tsx`, `backend/app/routers/officers.py`, `backend/app/routers/complaints.py`, `backend/test_officer_translated_only.py`.
 
 ---
 
@@ -491,23 +510,26 @@ flowchart TD
 #### Flowchart
 ```mermaid
 flowchart TD
-    Suite["Automated E2E Test Suite\n(backend/test_e2e.py)"] --> T1["1. User & Officer Auth"]
-    T1 --> T2["2. Multimodal Submission"]
-    T2 --> T3["3. AI Classification & YOLO"]
-    T3 --> T4["4. Trust Scoring & Duplicate AI"]
-    T4 --> T5["5. Smart Routing & Assignment"]
-    T5 --> T6["6. Officer Proof & Resolution"]
-    T6 --> T7["7. Citizen Verification Loop"]
-    T7 --> T8["8. SLA Breach & Escalation"]
-    T8 --> T9["9. Phase 16 ML Predictive Endpoints"]
-    T9 --> Build["Frontend Production Build Check\n(npm run build)"]
+    Suite["Automated Verification Suites"] --> T1["1. Neon Cloud Connectivity Check\n(test_neon_connection.py)"]
+    T1 --> T2["2. Evidence Hard-Gates Suite (11 Scenarios)\n(test_evidence_gates.py)"]
+    T2 --> T3["3. Multilingual & Kanglish Duplicate Tests\n(test_kanglish_duplicate.py, test_multilingual_duplicate.py)"]
+    T3 --> T4["4. Multi-Word Phrase Translation Tests\n(test_multiword_phrase_translation.py)"]
+    T4 --> T5["5. Officer Translated-Only Presentation Tests\n(test_officer_translated_only.py)"]
+    T5 --> T6["6. End-to-End Workflow Integration Suite\n(test_e2e.py)"]
+    T6 --> Build["7. Frontend Production Build Check\n(npm run build)"]
     Build --> Complete["System Verified: 100% Pass Rate\nProduction Ready"]
 ```
 
 #### How It Works (Short Description)
-* Verifies end-to-end platform integrity with an automated 13-step test suite covering the entire grievance lifecycle.
+* Verifies end-to-end platform integrity with an automated multi-suite testing harness covering the entire grievance lifecycle:
+  1. `test_neon_connection.py`: Verifies Neon cloud database connectivity, SSL enforcement, and table schemas.
+  2. `test_evidence_gates.py`: Validates all 11 evidence hard-gate scenarios (GPS deltas, timestamp freshness, semantic agreement, dHash).
+  3. `test_kanglish_duplicate.py` & `test_multilingual_duplicate.py`: Verifies duplicate detection across Kannada, Kanglish, Hinglish, and English.
+  4. `test_multiword_phrase_translation.py`: Validates longest-first multi-word Kannada phrase replacement.
+  5. `test_officer_translated_only.py`: Guarantees field officers never receive untranslated native script in queues.
+  6. `test_e2e.py`: Executes 13-step comprehensive lifecycle test from registration to citizen verification.
 * Confirms zero regressions in ML inference, routing logic, SLA triggers, and Next.js frontend builds.
-* **Key Files**: `backend/test_e2e.py`, `TESTING_GUIDE.md`.
+* **Key Files**: `backend/test_e2e.py`, `backend/test_evidence_gates.py`, `backend/test_neon_connection.py`, `TESTING_GUIDE.md`.
 
 ---
 
@@ -515,20 +537,20 @@ flowchart TD
 
 | Phase # | Phase Name | Primary Technology / Tools | Key Input | Key Output |
 |:---:|---|---|---|---|
-| **1** | Requirements & Domain | Specification Specs | Civic Problems | 20 Categories, Roles, State Rules |
+| **1** | Requirements & Domain | Specification Specs | Civic Problems | 4 Authorities, 47 Categories, Roles, State Rules |
 | **2** | System Architecture | FastAPI, Next.js 16 | System Scope | Modular skeleton, CORS, Routing |
-| **3** | Database & RBAC | PostgreSQL, SQLAlchemy, JWT | User credentials | JWT tokens, Role guards, Tables |
-| **4** | Karnataka Geography | Python Seeder | Civic structure | 5 Agencies, 8 Zones, 198 Wards |
-| **5** | Multimodal Intake | React 19, Leaflet, MediaAPI | Citizen submission | Multi-part form payload |
-| **6** | Translation & Clean | Indic / Google Translate | Raw KN/EN text | Normalized English text + Audio |
-| **7** | NLP & Priority AI | SentenceTransformers (`all-MiniLM-L6-v2`) | Clean text | Category & Priority (`Critical` to `Low`) |
-| **8** | YOLOv8 Computer Vision| Ultralytics YOLOv8n | Evidence photo | Detected objects & Bounding boxes |
-| **9** | Evidence Trust Scoring | Haversine + EXIF + Agreement | GPS, Photo, Text | Composite Trust (0–100%) & Rating |
-| **10** | Duplicate AI | Haversine + Cosine Sim | New complaint | Unique ticket OR Linked duplicate |
+| **3** | Database & RBAC | Neon Cloud PostgreSQL, SQLAlchemy 2.0, JWT | User credentials | Neon DB pool, JWT tokens, Role guards, Tables |
+| **4** | Karnataka Geography | Python Seeder (`seed.py`) | Civic structure | 4 Authorities, 8 Zones, 198 Wards, 47 Categories |
+| **5** | Multimodal Intake | React 19, Leaflet, MediaAPI | Citizen submission | Multi-part form payload (Audio, Photo, GPS) |
+| **6** | Translation & Clean | Google Translate + Local Multi-Word Fallback | Raw KN/EN/Hinglish | Normalized English text + Dual-field DB storage |
+| **7** | NLP & Priority AI | SentenceTransformers (`all-MiniLM-L6-v2`) | Clean text | 47-Category & Priority (`Critical` to `Low`) |
+| **8** | YOLOv8 Computer Vision| Ultralytics YOLOv8n, OpenCV | Evidence photo | Detected objects & Quality Diagnostics |
+| **9** | Evidence Trust Scoring | Haversine + EXIF + 4 Hard Gates | GPS, Photo, Text | Composite Trust (0–100%) & Decision States |
+| **10** | Duplicate AI | Haversine (100m) + Translated Text Embeddings | New complaint | Unique ticket OR Linked duplicate (`impact_count`) |
 | **11** | Smart Agency Routing | Least-Load Balancing | Verified ticket | Dispatched officer & Status update |
-| **12** | Officer Operations | Next.js Dashboard, REST | Assigned case | Proof photo & Status = `Resolved` |
+| **12** | Officer Operations | Next.js Dashboard, Translated English View | Assigned case | Proof photo & Status = `Resolved` |
 | **13** | Citizen Verification | Next.js Dashboard, Rating | Resolution proof | `Closed` (Rating) OR `Reopened` |
 | **14** | SLA Escalation | Periodic Daemon | Active timers | `Normal` &rarr; `Warning` &rarr; `Breached` |
 | **15** | GIS Analytics | Leaflet, React, ChartJS | Ticket telemetry | Spatial pins, Hotspot heatmaps |
 | **16** | Predictive ML | Scikit-Learn RandomForest | 128k records | SLA risk, Duration, 14-day forecasts |
-| **17** | E2E Testing & Hardening| Python Unittest, Next Build | Full codebase | 100% test pass rate, Production build |
+| **17** | E2E Testing & Hardening| Python Unittest Suites (7 Suites), Next Build | Full codebase | 100% test pass rate, Production build |
