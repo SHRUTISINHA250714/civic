@@ -1,7 +1,10 @@
 import os
+import re
+import io
 import uuid
 import shutil
 from typing import List, Optional
+from PIL import Image
 from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, Form
 from sqlalchemy.orm import Session
 from sqlalchemy import func
@@ -270,7 +273,8 @@ def serialize_complaint(c: Complaint, db: Session, user_role: Optional[str] = No
     orig_desc = c.original_description
 
     if user_role == "Officer":
-        orig_desc = None
+        # Keep English translated text as primary officer display (desc)
+        # Preserve original_description so the officer can view original citizen text on demand
         if not desc or is_untranslated_script(desc):
             desc = "Translation unavailable"
 
@@ -925,14 +929,76 @@ def resolve_complaint(
     if not officer or complaint.assigned_officer_id != officer.id:
         raise HTTPException(status_code=403, detail="Unauthorized: You are not assigned to this complaint")
 
-    # Save resolution image
-    file_ext = os.path.splitext(file.filename or "resolution.jpg")[1] or ".jpg"
+    # ── Basic validation before resolution (Phase 12 Requirements 3, 4, 5) ────
+    # 1. Descriptive remediation notes validation
+    clean_remarks = (remarks or "").strip()
+    if len(clean_remarks) < 15:
+        raise HTTPException(
+            status_code=400,
+            detail="Descriptive remediation notes are mandatory (minimum 15 characters) explaining the actual action taken."
+        )
+
+    placeholder_phrases = {
+        "done", "fixed", "ok", "test", "resolved", "completed", "work done", "solved",
+        "na", "n/a", "fine", "closed", "asdf", "repaired", "sorted", "no issue", "finished",
+        "good", "done done", "problem solved", "action taken", "issue resolved", "fixed it",
+        "checked and done", "work is done", "issue fixed", "all good", "nil", "none", "ok done"
+    }
+    normalized_rem = re.sub(r'[^\w\s]', '', clean_remarks.lower()).strip()
+    words = [w for w in normalized_rem.split() if w]
+    if (
+        normalized_rem in placeholder_phrases
+        or len(words) < 2
+        or len(set(words)) < 2
+        or re.match(r'^(.)\1+$', normalized_rem)
+    ):
+        raise HTTPException(
+            status_code=400,
+            detail="Descriptive remediation notes must explain the actual action taken. Generic placeholders, repetitive characters, or meaningless notes are rejected."
+        )
+
+    # 2. Mandatory photo proof validation
+    if not file or not file.filename:
+        raise HTTPException(
+            status_code=400,
+            detail="After-resolution photo proof is mandatory before a complaint can be marked Resolved."
+        )
+
+    file_ext = os.path.splitext(file.filename or "resolution.jpg")[1].lower() or ".jpg"
+    if file_ext not in [".jpg", ".jpeg", ".png", ".webp"]:
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid image format. Proof photo must be a valid JPG, PNG, or WEBP file."
+        )
+
+    contents = file.file.read()
+    if len(contents) < 2048:
+        raise HTTPException(
+            status_code=400,
+            detail="Resolution proof image is empty or too small (< 2KB). Please provide a valid, clear photograph of completed remediation."
+        )
+
+    # Verify image usability & integrity using PIL
+    try:
+        img = Image.open(io.BytesIO(contents))
+        img.verify()
+        img = Image.open(io.BytesIO(contents))
+        width, height = img.size
+        if width < 60 or height < 60:
+            raise ValueError("Image dimensions too small")
+    except Exception:
+        raise HTTPException(
+            status_code=400,
+            detail="Resolution proof image file is corrupted, unreadable, or clearly unusable."
+        )
+
+    # Save verified resolution image
     unique_filename = f"resolution_{uuid.uuid4()}{file_ext}"
     os.makedirs(settings.UPLOAD_DIR, exist_ok=True)
     file_path = os.path.join(settings.UPLOAD_DIR, unique_filename)
 
     with open(file_path, "wb") as buf:
-        shutil.copyfileobj(file.file, buf)
+        buf.write(contents)
 
     web_url = f"/static/uploads/{unique_filename}"
     is_verified, img_conf = verify_image(file_path, complaint.category.name)

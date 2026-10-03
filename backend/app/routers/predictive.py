@@ -70,14 +70,16 @@ def get_time_series_forecast(
 @router.post("/train", response_model=Dict[str, Any])
 def retrain_predictive_models(
     max_samples: int = 100000,
+    db: Session = Depends(get_db),
     current_user: User = Depends(get_current_admin)
 ):
     """
     Admin-only: Retrains the Random Forest SLA breach classifier and 
-    resolution regressor on the historical Karnataka grievance dataset.
+    resolution regressor on newly accumulated complaint/resolution records
+    combined with the historical Karnataka grievance dataset.
     """
-    stats = predictive_service.train_on_historical_dataset(max_samples=max_samples)
+    stats = predictive_service.retrain_from_database(db=db, max_samples=max_samples)
     return {
-        "message": "Predictive ML models successfully retrained and cached.",
+        "message": "Predictive ML models successfully retrained with accumulated database data and cached.",
         "training_stats": stats
     }

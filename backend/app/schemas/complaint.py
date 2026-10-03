@@ -73,6 +73,12 @@ class SLASummaryResponse(BaseModel):
     is_escalated: bool
     pct_elapsed: float              # 0-100
     hours_remaining: Optional[float] = None
+    predictive_early_warning: Optional[bool] = False
+    predictive_breach_prob: Optional[float] = None
+    predictive_message: Optional[str] = None
+    hours_overdue: Optional[float] = None
+    escalation_level: Optional[int] = None
+    escalation_stage: Optional[str] = None
 
 class CitizenVerifyResolutionRequest(BaseModel):
     """Citizen approves or rejects resolution."""

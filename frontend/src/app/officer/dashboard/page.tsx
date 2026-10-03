@@ -47,6 +47,7 @@ export default function OfficerDashboard() {
   const [resolutionRemarks, setResolutionRemarks] = useState('');
   const [resolutionImage, setResolutionImage] = useState<File | null>(null);
   const [isResolving, setIsResolving] = useState(false);
+  const [showOriginalText, setShowOriginalText] = useState(false);
   
   // Action state loader
   const [isTransitioning, setIsTransitioning] = useState(false);
@@ -124,18 +125,36 @@ export default function OfficerDashboard() {
 
   const handleResolveSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!resolutionRemarks) {
-      toast.error("Please enter resolution remarks.");
+    const cleanRemarks = resolutionRemarks.trim();
+    if (cleanRemarks.length < 15) {
+      toast.error("Descriptive remediation notes are mandatory (minimum 15 characters) explaining the actual action taken.");
       return;
     }
+
+    const placeholders = [
+      'done', 'fixed', 'ok', 'test', 'resolved', 'completed', 'work done',
+      'solved', 'fine', 'closed', 'na', 'n/a', 'done done', 'sorted', 'repaired', 'no issue', 'all good'
+    ];
+    const norm = cleanRemarks.toLowerCase().replace(/[^\w\s]/g, '').trim();
+    const words = norm.split(/\s+/).filter(Boolean);
+    if (placeholders.includes(norm) || words.length < 2 || new Set(words).size < 2 || /^(.)\1+$/.test(norm)) {
+      toast.error("Please explain the actual remediation action taken. Generic placeholders or meaningless notes are rejected.");
+      return;
+    }
+
     if (!resolutionImage) {
-      toast.error("Please upload a resolution proof photo.");
+      toast.error("After-resolution photo proof is mandatory before a complaint can be marked Resolved.");
+      return;
+    }
+
+    if (resolutionImage.size < 2048) {
+      toast.error("Resolution proof image file is empty or too small (< 2KB). Please upload a valid, clear photograph.");
       return;
     }
 
     setIsResolving(true);
     const formData = new FormData();
-    formData.append("remarks", resolutionRemarks);
+    formData.append("remarks", cleanRemarks);
     formData.append("file", resolutionImage);
 
     try {
@@ -257,9 +276,16 @@ export default function OfficerDashboard() {
                   <div className="flex items-center justify-between mb-1.5">
                     <span className="text-[10px] font-bold text-slate-400">ID: #{c.id}</span>
                     <div className="flex items-center gap-1">
-                      {/* SLA urgency badge */}
+                      {/* SLA urgency badge & Phase 14 enhancements */}
+                      {c.sla_summary?.predictive_early_warning && (
+                        <span className="text-[9px] px-1.5 py-0.5 rounded-full font-bold bg-indigo-100 text-indigo-700 dark:bg-indigo-950/40 dark:text-indigo-300">
+                          ⚡ ML Alert
+                        </span>
+                      )}
                       {c.sla_status === 'Breached' && (
-                        <span className="text-[9px] px-1.5 py-0.5 rounded-full font-bold bg-red-100 text-red-700 dark:bg-red-950/40 dark:text-red-400">🚨 SLA</span>
+                        <span className="text-[9px] px-1.5 py-0.5 rounded-full font-bold bg-red-100 text-red-700 dark:bg-red-950/40 dark:text-red-400">
+                          🚨 {c.sla_summary?.escalation_level ? `L${c.sla_summary.escalation_level} Overdue` : 'SLA Breached'}
+                        </span>
                       )}
                       {c.sla_status === 'Warning' && (
                         <span className="text-[9px] px-1.5 py-0.5 rounded-full font-bold bg-amber-100 text-amber-700 dark:bg-amber-950/40 dark:text-amber-400">⚠️ SLA</span>
@@ -344,23 +370,57 @@ export default function OfficerDashboard() {
                     </span>
                   </div>
                   <div>
-                    <span className="text-[10px] font-bold text-slate-400 block uppercase">Translated complaint description</span>
+                    <div className="flex items-center justify-between">
+                      <span className="text-[10px] font-bold text-slate-400 block uppercase">
+                        Primary Grievance Description (English Translated)
+                      </span>
+                      {selectedComplaint.original_description && (
+                        <button
+                          type="button"
+                          onClick={() => setShowOriginalText(!showOriginalText)}
+                          className="text-[10px] font-bold text-blue-600 hover:text-blue-700 dark:text-blue-400 flex items-center gap-1 cursor-pointer bg-blue-50 dark:bg-blue-950/40 px-2 py-0.5 rounded border border-blue-200 dark:border-blue-800 transition"
+                        >
+                          {showOriginalText ? "Hide Original Citizen Text" : "👁️ View Original Citizen Text"}
+                        </button>
+                      )}
+                    </div>
                     <p className="text-xs text-slate-700 dark:text-slate-350 italic font-semibold mt-1 bg-slate-50 dark:bg-slate-850 p-2.5 rounded-lg border border-slate-100 dark:border-slate-800/40">
                       "{selectedComplaint.description || "Translation unavailable"}"
                     </p>
+                    {showOriginalText && selectedComplaint.original_description && (
+                      <div className="mt-2 p-2.5 bg-amber-50/80 dark:bg-amber-950/30 rounded-lg border border-amber-200 dark:border-amber-800/60 animate-fade-in">
+                        <div className="flex items-center justify-between mb-1 text-[10px] font-bold text-amber-800 dark:text-amber-300">
+                          <span>Original Citizen Submission ({selectedComplaint.detected_language || selectedComplaint.language || "Regional"})</span>
+                          <span className="text-[9px] font-mono bg-amber-200/70 dark:bg-amber-900/50 px-1.5 py-0.2 rounded">Raw Citizen Input</span>
+                        </div>
+                        <p className="text-xs text-amber-950 dark:text-amber-100 font-medium">
+                          "{selectedComplaint.original_description}"
+                        </p>
+                      </div>
+                    )}
                   </div>
 
-                  {/* Multilingual Voice Note Audio Player */}
+                  {/* Multilingual Voice Note Audio Evidence & Meaning (Phase 12 Requirement 2) */}
                   {selectedComplaint.audio_url && (
-                    <div className="bg-indigo-50/80 dark:bg-indigo-950/30 p-3 rounded-lg border border-indigo-200 dark:border-indigo-800 space-y-1.5">
+                    <div className="bg-indigo-50/80 dark:bg-indigo-950/30 p-3 rounded-lg border border-indigo-200 dark:border-indigo-800 space-y-2">
                       <div className="flex items-center justify-between text-indigo-700 dark:text-indigo-300 text-xs font-bold">
                         <span className="flex items-center gap-1.5">
                           <Volume2 className="h-4 w-4" />
                           <span>Original Multilingual Audio Evidence</span>
                         </span>
-                        <span className="text-[10px] font-mono text-indigo-500 bg-indigo-100 dark:bg-indigo-900/60 px-1.5 py-0.5 rounded">Audio Clip</span>
+                        <span className="text-[10px] font-mono text-indigo-500 bg-indigo-100 dark:bg-indigo-900/60 px-1.5 py-0.5 rounded">
+                          {selectedComplaint.detected_language || "Multilingual"} Audio Clip
+                        </span>
                       </div>
                       <audio controls className="w-full h-8 mt-1" src={`http://127.0.0.1:8000${selectedComplaint.audio_url}`} />
+                      <div className="pt-2 border-t border-indigo-200/60 dark:border-indigo-800/50 text-xs text-indigo-900 dark:text-indigo-200">
+                        <span className="font-bold text-[10px] text-indigo-500 uppercase block mb-0.5">
+                          Extracted & Translated English Meaning:
+                        </span>
+                        <p className="italic bg-white/80 dark:bg-slate-900/70 p-2 rounded border border-indigo-100 dark:border-indigo-900/40 text-[11px] font-medium text-slate-800 dark:text-slate-200">
+                          "{selectedComplaint.description}"
+                        </p>
+                      </div>
                     </div>
                   )}
 
@@ -411,7 +471,7 @@ export default function OfficerDashboard() {
                 </div>
               </div>
 
-              {/* Leaflet Map coordinates centering */}
+              {/* Leaflet Map coordinates centering with duplicate impact count */}
               <div className="flex-1 min-h-[220px] relative rounded-xl overflow-hidden border border-slate-100 dark:border-slate-800 shrink-0 md:shrink flex flex-col">
                 <MapComponent 
                   center={[selectedComplaint.location_latitude, selectedComplaint.location_longitude]} 
@@ -422,7 +482,10 @@ export default function OfficerDashboard() {
                     longitude: selectedComplaint.location_longitude,
                     title: selectedComplaint.description,
                     status: selectedComplaint.status,
-                    category: selectedComplaint.category_name
+                    category: selectedComplaint.category_name,
+                    impact_count: selectedComplaint.impact_count || 1,
+                    priority: selectedComplaint.priority,
+                    location_address: selectedComplaint.location_address
                   }]}
                   interactive={false}
                 />
@@ -488,31 +551,51 @@ export default function OfficerDashboard() {
             
             <form onSubmit={handleResolveSubmit} className="p-6 space-y-4">
               <div>
-                <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Resolution Remarks <span className="text-red-500">*</span></label>
+                <div className="flex items-center justify-between mb-1">
+                  <label className="text-xs font-bold text-slate-500 uppercase">
+                    Descriptive Remediation Notes <span className="text-red-500">*</span>
+                  </label>
+                  <span className={`text-[10px] font-bold ${
+                    resolutionRemarks.trim().length >= 15 ? 'text-emerald-600 dark:text-emerald-400' : 'text-amber-600 dark:text-amber-400'
+                  }`}>
+                    {resolutionRemarks.trim().length} / 15 chars min
+                  </span>
+                </div>
                 <textarea
                   rows={3}
                   required
                   value={resolutionRemarks}
                   onChange={(e) => setResolutionRemarks(e.target.value)}
-                  placeholder="Describe the action taken to resolve this grievance (e.g. cleared the garbage dump, potholes filled with wet mix concrete...)"
+                  placeholder="Explain the actual action taken (e.g. Cleared 2 tons of garbage pile and disinfected the area with bleaching powder)"
                   className="w-full rounded-xl border border-slate-300 dark:border-slate-800 bg-slate-50 dark:bg-slate-900 p-3 text-sm focus:ring-2 focus:ring-blue-500 outline-none text-slate-800 dark:text-slate-100"
                 ></textarea>
+                <p className="text-[10px] text-slate-400 mt-0.5 font-medium">
+                  Must explain the actual repair/cleanup action taken. Placeholders like "done" or "fixed" will be rejected.
+                </p>
               </div>
 
               <div>
-                <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Resolution Proof Image <span className="text-red-500">*</span></label>
+                <label className="block text-xs font-bold text-slate-500 uppercase mb-1">
+                  Mandatory After-Resolution Photo Proof <span className="text-red-500">*</span>
+                </label>
                 <div className="relative rounded-xl border border-slate-300 dark:border-slate-800 bg-slate-50 dark:bg-slate-900 p-3 text-sm flex items-center space-x-2">
                   <ImageIcon className="h-4.5 w-4.5 text-slate-400" />
                   <input 
                     type="file" 
-                    accept="image/*" 
+                    accept="image/jpeg,image/png,image/webp" 
                     required
                     onChange={handleFileChange}
                     className="text-xs file:hidden text-slate-500 dark:text-slate-400 w-full cursor-pointer"
                   />
-                  {resolutionImage && <span className="text-[10px] text-emerald-600 font-bold block truncate max-w-[80px]">Proof Loaded</span>}
+                  {resolutionImage && (
+                    <span className="text-[10px] text-emerald-600 font-bold block truncate max-w-[120px]">
+                      {resolutionImage.name} ({Math.round(resolutionImage.size / 1024)}KB)
+                    </span>
+                  )}
                 </div>
-                <p className="text-[10px] text-slate-400 mt-1 font-semibold">Verification will fail if the proof is an indoor screen/device snapshot.</p>
+                <p className="text-[10px] text-slate-400 mt-1 font-semibold">
+                  Photo proof is mandatory. Corrupted, empty (&lt;2KB), or indoor monitor images are automatically rejected.
+                </p>
               </div>
 
               <div className="bg-slate-50 dark:bg-slate-950 px-6 py-4 -mx-6 -mb-6 border-t border-slate-200 dark:border-slate-800 flex justify-end space-x-2">

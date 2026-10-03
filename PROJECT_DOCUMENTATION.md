@@ -228,36 +228,47 @@ The platform empowers citizens to report civic grievances using **multilingual n
 
 ### Phase 12 — Field Officer Operational Workflow
 * **Core Deliverable**: `frontend/src/app/officer/dashboard/page.tsx` + `backend/app/routers/complaints.py` + `backend/app/routers/officers.py`.
-* **Enforced Translated-Only English Display**: Field officers strictly receive and view translated English descriptions across all complaint queues to eliminate language barriers on site, while citizens continue viewing their original native text.
+* **Primary English Display with Raw Citizen Text On-Demand**: English translated text is the primary officer display for operational efficiency, with an interactive toggle `[View Original Citizen Text]` allowing officers to inspect native phrasing when local nuance is needed.
+* **Multilingual Audio Preservation**: The original citizen voice recording is preserved; officers can play the original audio clip and view its extracted/translated English meaning side-by-side.
 * **State Progression**: `Registered` &rarr; `Accepted` &rarr; `In Progress` &rarr; `Resolved`.
-* **Resolution Proof**: Officer must attach an "After" resolution image and descriptive remediation remarks before submitting.
+* **Mandatory Resolution Validation Gate**:
+  - **Mandatory After-Resolution Photo Proof**: Image upload is compulsory. Validates format (`.jpg`, `.jpeg`, `.png`, `.webp`), minimum size ($\ge 2\text{KB}$), image integrity (Pillow verification), and minimum dimensions ($\ge 50\times 50\text{px}$).
+  - **Mandatory Descriptive Remediation Notes**: Explanation of actual action taken is compulsory ($\ge 15$ characters). Strictly rejects empty notes, short phrases, and meaningless placeholders (`"done"`, `"fixed"`, `"resolved"`, `"ok"`, `"test"`, `"action taken"`).
 
 ### Phase 13 — Citizen Verification & Reopen Feedback Loop
 * **Core Deliverable**: Gives citizens democratic oversight over resolution validity.
 * **Approve Flow**: Citizen confirms fix &rarr; Status becomes `Closed` &rarr; Submits 1–5 star rating and optional praise remarks.
 * **Reject Flow**: Citizen rejects inadequate fix &rarr; Status returns to `Reopened` &rarr; `reopen_count` increments &rarr; Officer receives urgent re-dispatch alert.
 
-### Phase 14 — SLA Tracking, Warning Timers & Escalation Engine
-* **Core Deliverable**: `backend/app/services/sla.py` enforces citizen service charters.
-* **SLA Thresholds**:
+### Phase 14 — SLA Tracking, Predictive Early Warning & Progressive Escalation
+* **Core Deliverable**: `backend/app/services/sla.py` + `backend/app/schemas/complaint.py`.
+* **Unchanged Base SLA Service Charters**:
   * **Critical**: 12 Hours
   * **High**: 24 Hours
   * **Medium**: 48 Hours
   * **Low**: 72 Hours
-* **SLA States**: `Normal` ($\le 75\%$), `Warning` ($>75\%$ and $\le 100\%$), `Breached` ($>100\%$).
-* **Auto-Escalation**: Unresolved breached tickets are flagged `is_escalated = True` and escalated to departmental supervisors.
+* **Phase 16 Predictive SLA Early Warning**: Calls the predictive ML model before the 75% elapsed threshold. If breach probability $\ge 60\%$, an early alert is triggered before the conventional 75% warning timer.
+* **SLA States & Progressive 3-Tier Escalation**: `Normal` ($\le 75\%$), `Warning` ($>75\%$ and $\le 100\%$), `Breached` ($>100\%$). If a breached complaint remains unresolved, it escalates progressively:
+  * **Level 1** ($\le 12\text{h}$ overdue): Escalated to Assistant Executive Engineer (AEE).
+  * **Level 2** ($12\text{–}24\text{h}$ overdue): Escalated to Executive Engineer (EE).
+  * **Level 3** ($> 24\text{h}$ overdue): Escalated to Chief Commissioner & Karnataka State Monitoring Cell.
 
 ### Phase 15 — GIS Mapping & Operational Analytics Dashboard
-* **Core Deliverable**: `frontend/src/app/admin/dashboard/page.tsx` + `backend/app/routers/dashboard.py`.
-* **Features**: Live spatial grievance pins, ward breakdown heatmaps, departmental resolution velocity charts, and SLA compliance telemetry.
+* **Core Deliverable**: `frontend/src/app/admin/dashboard/page.tsx` + `frontend/src/components/MapComponent.tsx` + `backend/app/routers/dashboard.py`.
+* **Current + Predicted Hotspots**: Displays both empirical active complaint density clusters (🔥 Flame pulse) and Phase 16 ML predicted surge hotspots (⚡ Violet radar pulse) on an interactive Leaflet map.
+* **"Reported by X people" Marker Display**: Map markers and cards report duplicate citizen impact count (`impact_count`) to highlight multi-citizen incidents.
+* **5 Interactive Filters & Layer Controls**: Full filtering toolbar supporting Agency (BBMP, BESCOM, BWSSB, BSWML), Grievance Category, Urgency Priority, Resolution Status, and Date Range (Today, 7d, 30d, All), with dynamic layer toggles.
 
-### Phase 16 — Predictive Machine Learning Intelligence & Early Warning
-* **Core Deliverable**: `backend/app/services/predictive.py` + `backend/app/routers/predictive.py`.
-* **Trained on 128,573 Real BBMP/Bengaluru Records**:
-  * **SLA Breach Risk Classifier**: `RandomForestClassifier` (84.4% Accuracy, 0.922 ROC-AUC).
-  * **Resolution Duration Regressor**: `RandomForestRegressor` (MAE ±12.75h).
-  * **Spatial Hotspot Forecaster**: Multi-factor scoring across 8 zones with seasonal monsoon multipliers (+35% to +45%).
-  * **14-Day Time-Series Projections**: Linear trend + day-of-week seasonality forecasting city and department intakes.
+### Phase 16 — Predictive Machine Learning Intelligence & Continuous Retraining
+* **Core Deliverable**: `backend/app/services/predictive.py` + `backend/app/routers/predictive.py` + `frontend/src/app/admin/dashboard/page.tsx`.
+* **Preserved Models & 13 Engineered Features**: Keeps `RandomForestClassifier` and `RandomForestRegressor` trained across 13 engineered dimensions: category, ward, zone, department, priority, month, day of week, hour, monsoon indicator, weekend indicator, department backlog count, SLA status code, and duplicate impact count.
+* **Rigorous 70/15/15 Evaluation Split**: Evaluated on 70% Train, 15% Validation, and 15% Test partitions.
+* **Comprehensive Metrics Reporting**:
+  * **Classification**: Accuracy, Precision, Recall, F1-Score, ROC-AUC.
+  * **Regression**: Mean Absolute Error (MAE in hours), Root Mean Squared Error (RMSE in hours), $R^2$ Score.
+  * **Validation Set**: Separate validation metrics reported on unseen data.
+* **Feature Importance & Explainability (XAI)**: Gini feature importances across all 13 dimensions visualised in progress bars with plain-language risk driver attribution.
+* **Continuous Database Retraining**: `POST /api/v1/predictive/train` dynamically extracts newly resolved complaints from PostgreSQL, combines them with historical data, and persists updated models.
 
 ### Phase 17 — Security Hardening, Automated Testing & Verification Harness
 * **Core Deliverable**: Comprehensive multi-suite test harness confirming zero regressions across all workflows:

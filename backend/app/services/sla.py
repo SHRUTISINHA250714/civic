@@ -171,9 +171,131 @@ def update_all_sla_statuses(db: Session) -> int:
                                 notification_type="SLA_Warning",
                             ))
 
+        # ── Progressive Escalation for complaints that remain breached ────────
+        if new_status == "Breached":
+            esc_level, esc_stage, hours_overdue = get_escalation_details(c)
+            if esc_level and esc_level >= 2:
+                existing_esc_notif = db.query(Notification).filter(
+                    Notification.complaint_id == c.id,
+                    Notification.notification_type == f"SLA_Escalation_L{esc_level}"
+                ).first()
+                if not existing_esc_notif:
+                    if c.assigned_officer_id:
+                        from backend.app.models.user import User, Officer
+                        officer = db.query(Officer).filter(Officer.id == c.assigned_officer_id).first()
+                        if officer:
+                            officer_user = db.query(User).filter(User.id == officer.user_id).first()
+                            if officer_user:
+                                db.add(Notification(
+                                    user_id=officer_user.id,
+                                    complaint_id=c.id,
+                                    message=f"🚨 PROGRESSIVE ESCALATION: Complaint #{c.id} ({c.category.name}) is {hours_overdue}h overdue. {esc_stage}.",
+                                    notification_type=f"SLA_Escalation_L{esc_level}"
+                                ))
+                    db.add(Notification(
+                        user_id=c.citizen_id,
+                        complaint_id=c.id,
+                        message=f"📢 Progressive Escalation Notice: Your grievance #{c.id} ({hours_overdue}h overdue) has progressed to {esc_stage}.",
+                        notification_type=f"SLA_Escalation_L{esc_level}"
+                    ))
+                    updated += 1
+
+        # ── Predictive SLA Early Warning Check (< 75% elapsed) ────────────────
+        elif new_status == "Normal" and pct < 0.75:
+            is_warn, prob, warn_msg = get_predictive_early_warning(c)
+            if is_warn:
+                existing_warn = db.query(Notification).filter(
+                    Notification.complaint_id == c.id,
+                    Notification.notification_type == "SLA_Predictive_Warning"
+                ).first()
+                if not existing_warn and c.assigned_officer_id:
+                    from backend.app.models.user import User, Officer
+                    officer = db.query(Officer).filter(Officer.id == c.assigned_officer_id).first()
+                    if officer:
+                        officer_user = db.query(User).filter(User.id == officer.user_id).first()
+                        if officer_user:
+                            db.add(Notification(
+                                user_id=officer_user.id,
+                                complaint_id=c.id,
+                                message=f"⚡ Predictive SLA Alert: Complaint #{c.id} ({c.category.name}) predicted at {prob}% breach risk before 75% SLA threshold.",
+                                notification_type="SLA_Predictive_Warning"
+                            ))
+                            updated += 1
+
     if updated > 0:
         db.commit()
     return updated
+
+
+def get_escalation_details(complaint: Complaint) -> Tuple[Optional[int], Optional[str], Optional[float]]:
+    """
+    Computes progressive escalation level (1, 2, 3) and stage details if breached and unresolved.
+    Level 1: <= 12 hours overdue -> Assistant Executive Engineer (AEE)
+    Level 2: 12-24 hours overdue -> Executive Engineer (EE)
+    Level 3: > 24 hours overdue  -> Chief Commissioner & State Monitoring Cell
+    """
+    if not complaint.sla_deadline:
+        return None, None, None
+    now = datetime.utcnow()
+    if now <= complaint.sla_deadline or complaint.status in ["Resolved", "Closed"]:
+        return None, None, None
+
+    hours_overdue = round((now - complaint.sla_deadline).total_seconds() / 3600.0, 2)
+    if hours_overdue <= 12.0:
+        return 1, "Level 1: Escalated to Assistant Executive Engineer (AEE)", hours_overdue
+    elif hours_overdue <= 24.0:
+        return 2, "Level 2: Escalated to Executive Engineer (EE)", hours_overdue
+    else:
+        return 3, "Level 3: Escalated to Chief Commissioner & State Monitoring Cell", hours_overdue
+
+
+def get_predictive_early_warning(complaint: Complaint) -> Tuple[bool, Optional[float], Optional[str]]:
+    """
+    Calls Phase 16 ML model before the 75% SLA threshold (pct_elapsed < 0.75).
+    If breach risk >= 60%, triggers an early warning before the normal 75% threshold.
+    """
+    if not complaint.sla_deadline:
+        return False, None, None
+    now = datetime.utcnow()
+    if now > complaint.sla_deadline or complaint.status in ["Resolved", "Closed"]:
+        return False, None, None
+
+    total_sec = (complaint.sla_deadline - complaint.created_at).total_seconds()
+    if total_sec <= 0:
+        return False, None, None
+    pct = (now - complaint.created_at).total_seconds() / total_sec
+    if pct >= 0.75:
+        # Already at or past the 75% SLA warning threshold
+        return False, None, None
+
+    # Evaluate Phase 16 predictive ML risk before the 75% threshold
+    try:
+        from backend.app.services.predictive import predictive_service, WARD_TO_ZONE
+        cat_name = complaint.category.name if complaint.category else "Others"
+        dept_code = complaint.category.department.code if complaint.category and complaint.category.department else "BBMP"
+        ward = "Central"
+        if complaint.location_address:
+            for w in WARD_TO_ZONE.keys():
+                if w in complaint.location_address.lower():
+                    ward = w.title()
+                    break
+
+        pred = predictive_service.predict_complaint_risk(
+            category=cat_name,
+            ward=ward,
+            priority=complaint.priority or "Medium",
+            dept=dept_code,
+            filed_at=complaint.created_at,
+            sla_status=complaint.sla_status or "Normal",
+            impact_count=getattr(complaint, "impact_count", 1) or 1
+        )
+        prob_pct = pred.get("sla_breach_probability_pct", 0.0)
+        if prob_pct >= 60.0:
+            msg = f"⚡ Predictive SLA Early Warning: High breach risk ({prob_pct}%) forecasted by Phase 16 ML before 75% threshold."
+            return True, prob_pct, msg
+        return False, prob_pct, None
+    except Exception:
+        return False, None, None
 
 
 def get_sla_summary(complaint: Complaint) -> dict:
@@ -185,10 +307,19 @@ def get_sla_summary(complaint: Complaint) -> dict:
         delta = (complaint.sla_deadline - datetime.utcnow()).total_seconds()
         hours_remaining = round(delta / 3600, 2)
 
+    esc_level, esc_stage, hours_overdue = get_escalation_details(complaint)
+    is_early_warn, breach_prob, warn_msg = get_predictive_early_warning(complaint)
+
     return {
         "sla_deadline": deadline_str,
         "sla_status": complaint.sla_status or sla_status_val,
-        "is_escalated": complaint.is_escalated or False,
+        "is_escalated": complaint.is_escalated or (esc_level is not None),
         "pct_elapsed": round(min(pct, 1.0) * 100, 1),
         "hours_remaining": hours_remaining,
+        "predictive_early_warning": is_early_warn,
+        "predictive_breach_prob": breach_prob,
+        "predictive_message": warn_msg,
+        "hours_overdue": hours_overdue,
+        "escalation_level": esc_level,
+        "escalation_stage": esc_stage,
     }

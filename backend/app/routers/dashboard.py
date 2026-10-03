@@ -3,6 +3,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy import func
 from typing import Dict, Any, List
 from datetime import datetime
+from collections import Counter, defaultdict
 
 from backend.app.core.database import get_db
 from backend.app.models.user import User, Officer, Role
@@ -190,21 +191,67 @@ def get_admin_stats(
     ev_suspicious = sum(1 for e in ev_checks if e.trust_level == "Suspicious")
     avg_trust_score = round(sum(e.trust_score for e in ev_checks) / total_ev, 2) if total_ev > 0 else 0.0
 
-    # ── 8. GIS Hotspot Data (top 20 complaint locations for heatmap) ──────────
+    # ── 8. GIS Hotspot Data & Markers (Phase 15) ─────────────────────────────
     all_complaints = db.query(Complaint).filter(
         Complaint.status.notin_(["Closed"])
     ).all()
+
     hotspot_points = [
         {
-            "lat":      c.location_latitude,
-            "lon":      c.location_longitude,
-            "id":       c.id,
-            "status":   c.status,
-            "priority": c.priority,
-            "category": c.category.name,
+            "lat":          c.location_latitude,
+            "lon":          c.location_longitude,
+            "id":           c.id,
+            "status":       c.status,
+            "priority":     c.priority,
+            "category":     c.category.name if c.category else "General",
+            "department":   c.category.department.code if c.category and c.category.department else "BBMP",
+            "agency":       c.category.department.code if c.category and c.category.department else "BBMP",
+            "impact_count": max(getattr(c, "impact_count", 1) or 1, 1),
+            "title":        (c.description[:60] + "...") if c.description and len(c.description) > 60 else (c.description or f"Complaint #{c.id}"),
+            "location_address": c.location_address or "Coordinates only",
+            "created_at":   c.created_at.isoformat() if c.created_at else None,
         }
         for c in all_complaints
     ]
+
+    # Calculate Current Hotspots from active complaints
+    ward_clusters = defaultdict(lambda: {"count": 0, "impact_sum": 0, "lats": [], "lons": [], "categories": Counter(), "dept": "BBMP"})
+    for c in all_complaints:
+        addr = c.location_address or ""
+        area = "Central"
+        for w in ["Koramangala", "Indiranagar", "Whitefield", "Banaswadi", "Jayanagar", "HSR Layout", "Kammanahalli", "Doddanekkundi", "Uttarahalli", "Gandhi Nagar", "Shankaramata", "Byatarayanapura", "Kengeri", "Peenya"]:
+            if w.lower() in addr.lower():
+                area = w
+                break
+        wc = ward_clusters[area]
+        wc["count"] += 1
+        wc["impact_sum"] += max(getattr(c, "impact_count", 1) or 1, 1)
+        wc["lats"].append(c.location_latitude)
+        wc["lons"].append(c.location_longitude)
+        if c.category:
+            wc["categories"][c.category.name] += 1
+            if c.category.department:
+                wc["dept"] = c.category.department.code
+
+    current_hotspots = []
+    for area, data in ward_clusters.items():
+        if data["count"] > 0:
+            avg_lat = sum(data["lats"]) / len(data["lats"])
+            avg_lon = sum(data["lons"]) / len(data["lons"])
+            top_cat = data["categories"].most_common(1)[0][0] if data["categories"] else "General"
+            current_hotspots.append({
+                "name": area,
+                "lat": round(avg_lat, 6),
+                "lon": round(avg_lon, 6),
+                "active_complaint_count": data["count"],
+                "total_impact_count": data["impact_sum"],
+                "top_category": top_cat,
+                "department": data["dept"],
+                "intensity_score": min(100, data["impact_sum"] * 12 + data["count"] * 8),
+            })
+    current_hotspots.sort(key=lambda x: x["intensity_score"], reverse=True)
+
+    predicted_hotspot_forecasts = predictive_service.get_hotspot_forecasts()
 
     # ── 9. Predictive Risk Insights (reopen rates, SLA breaches by dept) ──────
     reopen_counts = db.query(
@@ -258,7 +305,9 @@ def get_admin_stats(
             "suspicious":        ev_suspicious,
             "avg_trust_score":   avg_trust_score,
         },
-        "gis_hotspots":     hotspot_points,
+        "gis_hotspots":          hotspot_points,
+        "current_hotspots":      current_hotspots,
+        "predicted_hotspots":    predicted_hotspot_forecasts,
         "predictive_risk": {
             "reopen_rate_by_department":  reopen_by_dept,
             "sla_breach_by_department":   breach_by_dept_map,

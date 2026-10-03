@@ -409,20 +409,22 @@ flowchart TD
 ```mermaid
 flowchart TD
     Reg["Status: Registered\n(Officer Receives Notification)"] --> View["Officer Opens Dashboard Queue\n(/officer/dashboard)"]
-    View --> TransView["Enforce Translated-Only Display\n(Officer views strictly translated English,\npreventing language barriers on site)"]
-    TransView --> Accept["Officer Clicks 'Accept Case'\nStatus ➔ Accepted"]
+    View --> PrimaryTrans["Primary Display: Translated English\n(Quick triage without language barriers)"]
+    PrimaryTrans --> DualView["Preserved Native Audio & Text Access\n• Play original multilingual audio clip\n• View extracted/translated English meaning\n• Toggle 'View Original Citizen Text' on demand"]
+    DualView --> Accept["Officer Clicks 'Accept Case'\nStatus ➔ Accepted"]
     Accept --> Prog["Field Crew Dispatched\nStatus ➔ In Progress"]
     Prog --> Fix["Remediation Work Executed on Site"]
-    Fix --> Proof["Officer Uploads 'After' Photo Proof\n+ Descriptive Remediation Notes"]
-    Proof --> Resolved["Status ➔ Resolved\n(SLA Countdown Paused)"]
+    Fix --> ValidReq["Mandatory Resolution Validation Gate\n• Mandatory 'After' Photo Proof (>= 2KB, Valid Dimensions)\n• Mandatory Descriptive Notes (>= 15 chars, explains action)\n• Rejection of empty, placeholder, or meaningless notes"]
+    ValidReq --> Resolved["Status ➔ Resolved\n(SLA Countdown Paused)"]
 ```
 
 #### How It Works (Short Description)
 * Provides a mobile-responsive dashboard for field officers (`/officer/dashboard`).
-* **Enforced Translated-Only English Display**: Field officers and officer-facing endpoints (`/api/v1/officers/assigned-complaints`) strictly serve translated English descriptions to prevent language and dialect confusion for field crews on site, while citizens continue viewing their original native text in the citizen portal.
-* Enforces an immutable progression sequence: `Registered` &rarr; `Accepted` &rarr; `In Progress` &rarr; `Resolved`.
-* Strict resolution policy requires uploading photographic proof of resolution and entering remediation notes before a case can be marked resolved.
-* **Key Files**: `frontend/src/app/officer/dashboard/page.tsx`, `backend/app/routers/officers.py`, `backend/app/routers/complaints.py`, `backend/test_officer_translated_only.py`.
+* **Primary English Display with Original Text On-Demand**: English translated text serves as the primary officer display for standard operating efficiency, while officers can toggle to view the original raw citizen text when deeper local nuance is needed.
+* **Multilingual Audio Preservation**: The original citizen voice recording is preserved; officers can play the original audio clip and view its extracted and translated English meaning side-by-side.
+* **Mandatory After-Resolution Photo Proof**: A complaint cannot be marked `Resolved` without uploading a verified resolution proof image (min 2KB, valid dimensions $\ge 50\times 50\text{px}$, verified image integrity).
+* **Mandatory Descriptive Remediation Notes**: Requires descriptive notes explaining the actual physical action taken. Rejects empty notes, short notes ($< 15$ characters), and placeholders (`"done"`, `"fixed"`, `"resolved"`, `"ok"`, `"test"`, `"action taken"`).
+* **Key Files**: `frontend/src/app/officer/dashboard/page.tsx`, `backend/app/routers/complaints.py`, `backend/app/routers/officers.py`.
 
 ---
 
@@ -449,30 +451,34 @@ flowchart TD
 
 ---
 
-### Phase 14: SLA Tracking, Warning Timers & Escalation Engine
+### Phase 14: SLA Tracking, Early Warning & Progressive Escalation Engine
 
 #### Flowchart
 ```mermaid
 flowchart TD
-    Clock["Live Time Monitoring Daemon\n(Periodic SLA Check)"] --> Calc["Calculate Elapsed Time vs SLA Deadline\n(Critical: 12h | High: 24h | Med: 48h | Low: 72h)"]
-    Calc --> StateCheck{"Elapsed SLA Percentage"}
+    Clock["Live Time Monitoring Daemon\n(Periodic SLA Check)"] --> Calc["Calculate Elapsed Time vs SLA Deadline\n(Critical: 12h | High: 24h | Med: 48h | Low: 72h - Unchanged)"]
+    Calc --> EarlyWarn{"Elapsed < 75% & Phase 16 ML Breach Risk >= 60%?"}
+    EarlyWarn -->|Yes| AlertEarly["⚡ Predictive SLA Early Warning\n(Proactive notification before 75% threshold)"]
+    EarlyWarn -->|No| StateCheck{"Elapsed SLA Percentage"}
     
     StateCheck -->|0% to 75%| Norm["SLA Status: Normal"]
     StateCheck -->|75% to 100%| Warn["SLA Status: Warning\nSend Proactive Alert to Officer"]
-    StateCheck -->|Over 100% Unresolved| Breach["SLA Status: Breached\nSet is_escalated = True"]
+    StateCheck -->|> 100% Unresolved| Breach["SLA Status: Breached\nSet is_escalated = True"]
     
-    Breach --> Escalation["Auto-Escalate to Departmental Supervisor\nFlag in Admin Hotlist"]
+    Breach --> ProgEsc{"Hours Overdue Progressive Escalation"}
+    ProgEsc -->|<= 12 Hours| L1["Level 1: Escalated to Assistant Executive Engineer (AEE)"]
+    ProgEsc -->|12 - 24 Hours| L2["Level 2: Escalated to Executive Engineer (EE)"]
+    ProgEsc -->|> 24 Hours| L3["Level 3: Escalated to Chief Commissioner & State Monitoring Cell"]
 ```
 
 #### How It Works (Short Description)
-* Automatically enforces citizen service charters based on grievance priority:
-  * **Critical**: 12 hours
-  * **High**: 24 hours
-  * **Medium**: 48 hours
-  * **Low**: 72 hours
-* Dynamically shifts SLA status: `Normal` (&le; 75%) &rarr; `Warning` (75%–100%) &rarr; `Breached` (> 100%).
-* Automatically flags overdue tickets (`is_escalated = True`) and notifies agency supervisors.
-* **Key Files**: `backend/app/services/sla.py`.
+* **Unchanged Base SLA Flow**: Preserves the established standard SLA service charters: `Critical` 12h, `High` 24h, `Medium` 48h, `Low` 72h.
+* **Phase 16 Predictive SLA Early Warning**: Calls the predictive ML model before the 75% elapsed threshold; if predicted breach risk is $\ge 60\%$, an early alert is triggered before the conventional 75% warning.
+* **Progressive 3-Tier Escalation**: If a breached complaint remains unresolved, it escalates progressively:
+  * **Level 1** ($\le 12\text{h}$ overdue): Escalated to Assistant Executive Engineer (AEE).
+  * **Level 2** ($12\text{–}24\text{h}$ overdue): Escalated to Executive Engineer (EE).
+  * **Level 3** ($> 24\text{h}$ overdue): Escalated to Chief Commissioner & Karnataka State Monitoring Cell.
+* **Key Files**: `backend/app/services/sla.py`, `backend/app/schemas/complaint.py`.
 
 ---
 
@@ -481,43 +487,44 @@ flowchart TD
 #### Flowchart
 ```mermaid
 flowchart TD
-    DB[(Active Complaints & History)] --> Aggr["Spatial & Temporal Aggregations\n(/api/v1/dashboard/admin)"]
-    Aggr --> Map["Interactive Leaflet Map\n(Color-Coded Status Pins & Clusters)"]
-    Aggr --> Metrics["Executive KPI Cards\n(Resolution Rate, SLA Compliance %)"]
-    Aggr --> Heatmap["Ward & Zone Density Breakdown"]
-    Aggr --> Velocity["Department Caseload & Velocity Charts"]
+    DB[(Active Complaints & Hotspots)] --> Filters["Dynamic Multi-Attribute Filters\n• Agency (BBMP, BESCOM, BWSSB, BSWML)\n• Category (Potholes, Garbage, etc.)\n• Priority (Critical, High, Med, Low)\n• Status (Registered, Accepted, In Progress, Resolved)\n• Date Range (Today, 7d, 30d, All)"]
+    Filters --> LayerEngine["Spatial Layer Engine\n• Filtered Complaint Pins with 'Reported by X people'\n• Current Active Hotspots (Empirical density & impact sum)\n• Phase 16 Predicted Hotspots (AI forecast surge zones)"]
+    LayerEngine --> LeafletMap["Interactive Spatial Leaflet Map\n(Status Pins, 🔥 Flame Pulse, ⚡ Violet Radar Pulse)"]
+    LayerEngine --> SideBySide["Side-by-Side Analysis:\nCurrent Hotspots vs Predicted Surges"]
 ```
 
 #### How It Works (Short Description)
-* Centralized command-and-control center for state and municipal administrators (`/admin/dashboard`).
-* Renders real-time geospatial pin clusters, ward-level complaint distribution, agency resolution velocity, and SLA compliance metrics.
-* Enables filtering by agency, zone, status, priority, and date range.
-* **Key Files**: `frontend/src/app/admin/dashboard/page.tsx`, `backend/app/routers/dashboard.py`.
+* Centralized command-and-control geospatial intelligence center (`/admin/dashboard`).
+* **Current + Predicted Hotspots**: Displays both empirical active complaint density hotspots (flame pulse) and Phase 16 ML predicted surge hotspots (violet radar pulse).
+* **"Reported by X people" Marker Display**: Every marker popup and card reports citizen duplicate impact count (`impact_count`), prioritizing multi-citizen incidents.
+* **5 Interactive Filters**: Allows filtering simultaneously by Agency (BBMP, BESCOM, BWSSB, BSWML), Grievance Category, Urgency Priority, Resolution Status, and Date Range, with a Layer Switcher (All, Complaints Only, Current Hotspots Only, Predicted Hotspots Only).
+* **Key Files**: `frontend/src/app/admin/dashboard/page.tsx`, `frontend/src/components/MapComponent.tsx`, `backend/app/routers/dashboard.py`.
 
 ---
 
-### Phase 16: Predictive Machine Learning Intelligence & Early Warning
+### Phase 16: Predictive Machine Learning Intelligence & Continuous Retraining
 
 #### Flowchart
 ```mermaid
 flowchart TD
-    History["128,573 Historical BBMP Records\n(Janahita Dataset)"] --> Train["Offline Scikit-Learn Training\n(RandomForest Models)"]
-    Train --> Models["Exported ML Model Artifacts\n(sla_breach_model.joblib, duration_model.joblib)"]
+    DataPool["Historical Grievances (128,573+ records)\n+ PostgreSQL Newly Resolved Complaints"] --> FeatEng["13-Feature Engineering Pipeline\n[category, ward, zone, department, priority,\nmonth, day_of_week, hour, is_monsoon, is_weekend,\nbacklog_count, sla_status_code, impact_count]"]
     
-    Models --> API["Predictive API Router\n(/api/v1/predictive)"]
-    API --> F1["1. SLA Breach Risk Classifier\n(84.4% Accuracy, 0.922 ROC-AUC)"]
-    API --> F2["2. Resolution Duration Regressor\n(MAE ±12.75 Hours)"]
-    API --> F3["3. 8-Zone Spatial Risk Forecaster\n(+Monsoon Seasonal Multipliers)"]
-    API --> F4["4. 14-Day Grievance Intake Time-Series"]
+    FeatEng --> Split["Rigorous Evaluation Split\n70% Train / 15% Validation / 15% Test"]
+    Split --> Train["Scikit-Learn RandomForest Pipelines\n• SLA Breach Classifier (100 Estimators)\n• Resolution Duration Regressor (100 Estimators)"]
+    
+    Train --> Metrics["Full Model Performance Reporting\n• Classification: Accuracy, Precision, Recall, F1, ROC-AUC\n• Regression: MAE (hours), RMSE (hours), R² Score"]
+    Train --> XAI["Feature Importance & Explainability (XAI)\nGini importance attribution for all 13 features"]
+    Train --> Retrain["POST /api/v1/predictive/train\nPeriodic retraining merging new DB resolutions"]
 ```
 
 #### How It Works (Short Description)
-* Adds predictive intelligence trained on **128,573 historical municipal records**.
-* **SLA Breach Risk Predictor**: Evaluates category, zone, priority, and current backlog to estimate breach probability.
-* **Resolution Duration Regressor**: Forecasts expected hours to resolve (MAE $\pm 12.75$ hours).
-* **Spatial Risk Forecaster**: Ranks all 8 Bengaluru zones using seasonal monsoon multipliers (+35% to +45% during peak monsoon).
-* **14-Day Intake Forecasting**: Projects future grievance volumes per department for proactive crew staffing.
-* **Key Files**: `backend/app/services/predictive.py`, `backend/app/routers/predictive.py`.
+* **Preserved RandomForest Architecture**: Keeps the established `RandomForestClassifier` and `RandomForestRegressor` models and inference flow.
+* **13 Engineered Complaint Features**: Category, ward, zone, department, priority, month, day of week, hour, monsoon indicator, weekend indicator, department backlog count, SLA status code, and duplicate impact count.
+* **Rigorous 70/15/15 Evaluation Split**: Evaluated on 70% Train, 15% Validation, and 15% Test partitions.
+* **Comprehensive Metrics Reporting**: Reports Accuracy, Precision, Recall, F1-Score, and ROC-AUC for classification, and MAE, RMSE, and $R^2$ for regression on both Test and Validation sets.
+* **Feature Importance & Explainability (XAI)**: Attributes prediction factors using Gini feature importances across all 13 features and provides human-readable driver explanations.
+* **Periodic Retraining**: Endpoint `POST /api/v1/predictive/train` extracts newly resolved grievances from PostgreSQL, combines them with historical baselines, and persists retrained models.
+* **Key Files**: `backend/app/services/predictive.py`, `backend/app/routers/predictive.py`, `frontend/src/app/admin/dashboard/page.tsx`.
 
 ---
 
