@@ -411,24 +411,41 @@ def evaluate_semantic_match(
     # Specific category negative filters (hard mismatch detection)
     is_pothole_complaint = any(k in cat_lower for k in ["pothole", "road", "tar", "asphalt"])
     is_garbage_complaint = any(k in cat_lower for k in ["garbage", "waste", "trash", "dump"])
+    is_streetlight_complaint = any(k in cat_lower for k in ["streetlight", "street light", "lamp", "lighting"])
     is_power_complaint = any(k in cat_lower for k in ["power", "electric", "wire", "spark", "transformer"])
     is_water_complaint = any(k in cat_lower for k in ["water", "sewage", "drain", "leak", "pipe"])
 
     # Filename / image label context clues
     fname = os.path.basename(image_path).lower() if image_path else ""
-    is_garbage_img_hint = any(k in fname for k in ["garbage", "trash", "waste", "dump"])
-    is_pothole_img_hint = any(k in fname for k in ["pothole", "road_damage", "crater", "asphalt"])
+    is_garbage_img_hint = any(k in fname for k in ["garbage", "trash", "waste", "dump", "litter", "rubbish"])
+    is_pothole_img_hint = any(k in fname for k in ["pothole", "road_damage", "crater", "asphalt", "broken_road"])
 
-    GARBAGE_COCO_OBJECTS = {"bottle", "cup", "wine glass", "banana", "apple", "sandwich", "backpack", "suitcase"}
-    has_garbage_objects = bool(detected_set & GARBAGE_COCO_OBJECTS)
+    GARBAGE_COCO_OBJECTS = {
+        "bottle", "cup", "wine glass", "banana", "apple", "sandwich", "backpack", "suitcase",
+        "garbage", "garbage_dump", "waste", "plastic_waste", "trash", "trash_can", "litter", "rubbish", "dump"
+    }
+    has_garbage_objects = any(any(g in obj for g in GARBAGE_COCO_OBJECTS) for obj in detected_set)
 
-    # 1. Pothole complaint with garbage photo -> Hard Mismatch
-    if is_pothole_complaint and (is_garbage_img_hint or has_garbage_objects) and not is_pothole_img_hint:
-        return "MISMATCH", 0.92, "Garbage / Solid Waste", "Image depicts solid waste/garbage, but complaint is for road damage/potholes."
+    ROAD_DAMAGE_OBJECTS = {
+        "pothole", "road_pothole", "asphalt_crack", "crater", "broken_road", "road_damage"
+    }
+    has_road_damage_objects = any(any(r in obj for r in ROAD_DAMAGE_OBJECTS) for obj in detected_set)
 
-    # 2. Garbage complaint with pothole photo -> Hard Mismatch
-    if is_garbage_complaint and is_pothole_img_hint and not (is_garbage_img_hint or has_garbage_objects):
-        return "MISMATCH", 0.92, "Road Damage / Pothole", "Image depicts road damage/potholes, but complaint is for garbage/waste."
+    # 1. Streetlight complaint with garbage photo -> Hard Mismatch
+    if is_streetlight_complaint and (is_garbage_img_hint or has_garbage_objects):
+        return "MISMATCH", 0.95, "Garbage / Solid Waste", "Image depicts solid waste/garbage, but complaint is for streetlights."
+
+    # 2. Streetlight complaint with pothole/road damage photo -> Hard Mismatch
+    if is_streetlight_complaint and (is_pothole_img_hint or has_road_damage_objects):
+        return "MISMATCH", 0.94, "Road Damage / Pothole", "Image depicts road damage/pothole, but complaint is for streetlights."
+
+    # 3. Pothole complaint with garbage photo -> Hard Mismatch
+    if is_pothole_complaint and (is_garbage_img_hint or has_garbage_objects) and not (is_pothole_img_hint or has_road_damage_objects):
+        return "MISMATCH", 0.95, "Garbage / Solid Waste", "Image depicts solid waste/garbage, but complaint is for road damage/potholes."
+
+    # 4. Garbage complaint with pothole photo -> Hard Mismatch
+    if is_garbage_complaint and (is_pothole_img_hint or has_road_damage_objects) and not (is_garbage_img_hint or has_garbage_objects):
+        return "MISMATCH", 0.95, "Road Damage / Pothole", "Image depicts road damage/potholes, but complaint is for garbage/waste."
 
     # Fallback to SentenceTransformer embedding similarity if available
     sim_score = 0.65
@@ -686,8 +703,11 @@ def compute_evidence_trust(
     else:
         trust_level = "Suspicious"
 
+    image_verification_result = "Image does not match complaint" if (semantic_status == "MISMATCH" or verification_decision == "REJECTED" or yolo_info["is_indoor_device"]) else "Image matches complaint"
+
     return {
         "verification_decision": verification_decision,
+        "image_verification_result": image_verification_result,
         "trust_score": trust_score,
         "trust_level": trust_level,
         "live_gps_provided": live_gps_provided,

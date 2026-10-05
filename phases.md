@@ -130,10 +130,11 @@ flowchart TD
 #### Flowchart
 ```mermaid
 flowchart TD
-    User["User Registration / Login"] --> Auth["Auth Router\n(/api/v1/auth)"]
+    User["User Registration / Login\n(Password Visibility Toggle: Eye / EyeOff)"] --> Auth["Auth Router\n(/api/v1/auth)"]
     Auth --> Hash["Bcrypt Password Hashing\n& Verification"]
     Hash --> JWT["Generate Signed\nJWT Bearer Token"]
-    JWT --> Guards["FastAPI Role Dependencies\n(get_current_active_user)"]
+    JWT --> Storage["Dual-Storage Client Session\n(localStorage + sessionStorage Fallback)\ntokenStorage.ensureSession(expectedRole)"]
+    Storage --> Guards["FastAPI Role Dependencies\n(get_current_active_user)"]
     Guards --> DB[(Neon Serverless Cloud PostgreSQL\nusers, roles, officers, complaints)]
     DB --> Pool["Connection Pool & SSL Engine\npool_pre_ping, pool_recycle=300s,\nsslmode=require, 3-Attempt Startup Retry"]
 ```
@@ -142,8 +143,10 @@ flowchart TD
 * Implements relational schema management using SQLAlchemy 2.0 with **Neon serverless cloud PostgreSQL** as the primary production-grade database, with local PostgreSQL retained as a developer fallback.
 * Enforces SSL encryption (`sslmode=require`), connection pooling resilience (`pool_pre_ping=True`, `pool_recycle=300`, `pool_size=10`, `max_overflow=20`), and an automated 3-attempt exponential startup retry to handle serverless cold starts gracefully.
 * Secures citizen and officer identity with Bcrypt password hashing and OAuth2 JWT tokens.
+* **Password Visibility Toggle**: Interactive `Eye` / `EyeOff` toggles on all password and confirm-password fields across login and registration interfaces (`/login`, `/register`) to eliminate typing mistakes while maintaining security.
+* **Robust Session Persistence**: Client-side dual-storage fallback (`localStorage` + `sessionStorage`) with `tokenStorage.ensureSession(expectedRole)` to guarantee zero session loss, eliminating premature logout redirects when users refresh their browser on Citizen and Officer dashboards.
 * Enforces role-based permissions: Citizens can only access their own filings, Officers access assigned field cases, and Admins oversee city-wide operations.
-* **Key Files**: `backend/app/models/user.py`, `backend/app/core/database.py`, `backend/app/routers/auth.py`, `backend/test_neon_connection.py`.
+* **Key Files**: `frontend/src/app/login/page.tsx`, `frontend/src/app/register/page.tsx`, `frontend/src/lib/api.ts`, `backend/app/models/user.py`, `backend/app/core/database.py`, `backend/app/routers/auth.py`, `backend/test_neon_connection.py`.
 
 ---
 
@@ -195,6 +198,7 @@ flowchart TD
   2. **Typed Street Address & Live GPS**: Citizens can type street addresses or landmarks as additional location context while keeping high-precision device GPS capture and Leaflet interactive map pinning unchanged.
   3. **Optional Text & Multilingual Voice**: Text descriptions and voice notes are optional. If text is omitted, the system falls back gracefully to voice transcriptions or structured photo evidence markers.
   4. **Multilingual Audio Preservation**: The original audio recording is securely saved and linked (`audio_url`). Field officers can read the normalized translated text and listen directly to the original citizen audio clip in the Officer Dashboard.
+  5. **Citizen Dashboard Performance Optimization**: Solved citizen dashboard loading delays by decoupling primary complaint retrieval from heavy secondary nearby geolocation scans. The backend `GET /api/v1/complaints` leverages SQLAlchemy eager loading (`joinedload` on `category`, `category.department`, `assigned_officer`, and `user`, plus `selectinload` on `images`), eliminating N+1 database queries and enabling instantaneous complaint rendering.
 * **Key Files**: `frontend/src/app/citizen/dashboard/page.tsx`, `frontend/src/app/officer/dashboard/page.tsx`, `backend/app/routers/complaints.py`.
 
 ---
@@ -219,10 +223,11 @@ flowchart TD
 #### How It Works (Short Description)
 * Employs an intelligent **2-tier translation and transliteration pipeline** designed specifically for Karnataka's linguistic diversity (Kannada script, Romanized Kanglish, Hinglish, English):
   1. **High-Precision Kanglish / Hinglish Detection Guard**: Prevents Romanized vernacular text from bypassing translation due to false-positive English detection (`langdetect` English confidence must exceed 0.95 with zero Indic marker words).
-  2. **Tier-1 Online Translation Engine**: Leverages `deep_translator` with Google Translator for natural, high-accuracy cross-language normalization.
-  3. **Tier-2 Offline Local Dictionary Fallback**: Evaluates longest multi-word Kannada phrases first (e.g. `"ಬೀದಿ ದೀಪ"` &rarr; `"streetlight"`, `"ರಸ್ತೆ ಹಾಳಾಗಿದೆ"` &rarr; `"road is completely damaged"`) before single tokens, eliminating residual native script.
+  2. **Kanglish vs. Genuine English Boundary Precision**: Uses strict word-boundary token matching (`\b[a-zA-Z]+\b`) and a curated Indic lexicon. Genuine English text mentioning local Karnataka locations (e.g., *"There are potholes on MG Road in Bengaluru"*, *"Indiranagar"*, *"Koramangala"*) is accurately preserved as English (`en`) and protected from false Kanglish corruption, while genuine Romanized Kannada (*"roaddalli thumba gundi ide"*) is accurately detected and normalized.
+  3. **Tier-1 Online Translation Engine**: Leverages `deep_translator` with Google Translator for natural, high-accuracy cross-language normalization.
+  4. **Tier-2 Offline Local Dictionary Fallback**: Evaluates longest multi-word Kannada phrases first (e.g. `"ಬೀದಿ ದೀಪ"` &rarr; `"streetlight"`, `"ರಸ್ತೆ ಹಾಳಾಗಿದೆ"` &rarr; `"road is completely damaged"`) before single tokens, eliminating residual native script.
 * **Dual-Field Non-Destructive Storage**: Preserves the citizen's original statement verbatim in `original_description` while storing the normalized English text in `description` for AI classification, vector embeddings, and field officer presentation.
-* **Key Files**: `backend/app/services/ai.py` (`translate_text`), `backend/test_kanglish_duplicate.py`, `backend/test_multilingual_duplicate.py`, `backend/test_multiword_phrase_translation.py`.
+* **Key Files**: `backend/app/services/ai.py` (`translate_text`, `is_kanglish_or_indic_text`), `backend/test_kanglish_duplicate.py`, `backend/test_multilingual_duplicate.py`, `backend/test_multiword_phrase_translation.py`.
 
 ---
 
@@ -248,6 +253,11 @@ flowchart TD
 #### How It Works (Short Description)
 * Uses SentenceTransformer (`all-MiniLM-L6-v2`) to produce 384-dimensional dense semantic embeddings of the normalized English complaint text.
 * Classifies the text into one of **47 standardized civic categories** by calculating maximum cosine similarity against pre-computed category anchor vectors.
+* **Deterministic Department Routing Rules & Domain Overrides**: Implements strict precedence rules before vector similarity to prevent misclassifications:
+  1. **Roads & Potholes &rarr; BBMP**: Keywords like *"pothole"*, *"crater"*, *"sinkhole"*, *"damaged road"*, *"broken asphalt"* (including landmark-heavy complaints such as *"There are potholes on MG Road in Bengaluru"*) are deterministically classified under BBMP `Potholes & Damaged Roads`.
+  2. **Solid Waste & Litter &rarr; BSWML**: Keywords like *"garbage"*, *"trash"*, *"dump"*, *"debris"*, *"rubbish"* route strictly to BSWML categories (`Door-to-Door Garbage Not Collected` or `Illegal Roadside Waste Dumping`).
+  3. **Water Supply & Sewerage &rarr; BWSSB**: Keywords like *"pipe burst"*, *"water supply"*, *"manhole"*, *"sewage"* route to BWSSB.
+  4. **Streetlights vs. Power Grid**: Municipal illumination faults route to BBMP streetlighting, while high-voltage line snapped, sparking transformers, or grid power outages route to BESCOM.
 * **Explainable Hybrid Priority Score (0.0 - 1.0)**: Computes priority using an objective 5-factor weighted formula:
   1. **35% Category Baseline Risk**: Inherited from departmental risk weighting (high-voltage electricity, sewer collapses, water contamination vs. cosmetic issues).
   2. **25% Emergency Signal Score**: Detected hazard keywords (sparks, fumes, sinkhole, toxic, collapsing, explosion).
@@ -344,12 +354,16 @@ flowchart TD
 * Enforces server-side authority with **4 Hard Verification Gates** to prevent spoofed, fraudulent, or recycled submissions:
   1. **Gate 1 (Geospatial Cross-Validation)**: Calculates Haversine distance between reported live device GPS and photo EXIF coordinates. Distance $\le 500\text{m}$ confirms `MATCH`. Distance $\ge 5000\text{m}$ triggers `SUSPICIOUS`. Missing EXIF gracefully falls back to `EXIF_MISSING`.
   2. **Gate 2 (Timestamp Freshness)**: Ensures photo was taken within 72 hours (`FRESH`). Photos $> 72\text{h}$ are flagged `STALE`, and future timestamps ($> 10\text{m}$) are flagged `FUTURE` $\to$ `MANUAL_REVIEW`.
-  3. **Gate 3 (Semantic Agreement)**: Cross-checks complaint text and category against image features using `all-MiniLM-L6-v2` SentenceTransformers and YOLO indicators. Strict negative filters detect cross-category mismatches (e.g. Pothole complaint with Garbage photo). **Critical rule: Semantic mismatches are barred from ever receiving `VERIFIED` status and are routed to `REJECTED`**.
+  3. **Gate 3 (Semantic Agreement & Mismatch Guard)**: Cross-checks complaint text and category against image features using `all-MiniLM-L6-v2` SentenceTransformers and YOLO indicators. Strict negative filters detect cross-category mismatches (e.g., streetlight or pothole complaint with garbage/waste photo, or road complaint with indoor furniture). **Critical rule: Semantic mismatches are barred from ever receiving `VERIFIED` status and are routed to `REJECTED`**.
   4. **Gate 4 (Reused Image Detection)**: Computes a 64-bit difference perceptual hash (`dHash`). Bitwise Hamming distance $\le 4$ flags duplicate or re-submitted images across complaints, setting `is_reused_image = True` $\to$ `SUSPICIOUS`.
+* **Explicit User-Facing Image Verification Result**: Computes a standardized `image_verification_result` string exposed across Citizen and Officer dashboards:
+  - `"Image matches complaint"` for verified semantic correspondence (`MATCH`).
+  - `"Image does not match complaint"` for cross-category discrepancies (`MISMATCH`).
+  - `"Image partially matches complaint"` for borderline or unconfirmed visual cues (`PARTIAL`).
 * **Decision States**: `VERIFIED`, `PARTIALLY_VERIFIED`, `MANUAL_REVIEW`, `SUSPICIOUS`, `REJECTED`.
 * **Composite Trust Score (0–100%)**: Weighted composition: GPS ($35\%$), Timestamp ($20\%$), Semantic Vision ($45\%$). Clamped to $\le 24\%$ if `REJECTED` and $\le 35\%$ if `SUSPICIOUS`.
 * **Audit API Endpoint**: `GET /api/v1/complaints/{id}/evidence` returns complete gate telemetry and explainable audit logs.
-* **Key Files**: `backend/app/services/evidence.py`, `backend/test_evidence_gates.py`.
+* **Key Files**: `backend/app/services/evidence.py`, `backend/test_evidence_gates.py`, `backend/test_civic_fixes_verification.py`.
 
 ---
 
@@ -376,8 +390,9 @@ flowchart TD
   2. Extracts domain civic keywords (`extract_civic_keywords`), stripping stopwords to protect against differing phrasing styles (e.g. *"gundi biddide"* vs *"dangerous crater pothole"*).
   3. Blends dense SentenceTransformer semantic similarity ($80\%$) with keyword token Jaccard similarity ($20\%$), augmented with a spatial proximity bonus for complaints within 40m.
 * **Spatial & Same-Category Constraint**: Retains the strict requirement that grievances must belong to the same civic category and fall within a 100-meter radius via Haversine distance.
+* **Multimodal Image Mismatch Duplicate Guard**: Computes visual evidence verification *before* duplicate clustering. If an incoming complaint's image is evaluated as a semantic mismatch (`image_semantic_status == "MISMATCH"`, e.g., submitting garbage evidence for a pothole report), the complaint is strictly rejected from linking as a duplicate of any existing ticket, preventing fraudulent or mismatched submissions from co-opting active cases.
 * **Parent Impact & Escalation**: Increments the parent ticket's `impact_count`, displays *"Reported by X people"* across Citizen and Officer dashboards, and automatically elevates the parent ticket's priority and SLA if the aggregated impact count warrants it.
-* **Key Files**: `backend/app/services/duplicate.py`, `backend/test_kanglish_duplicate.py`, `backend/test_multilingual_duplicate.py`, `backend/test_enhancements.py`.
+* **Key Files**: `backend/app/services/duplicate.py`, `backend/app/routers/complaints.py`, `backend/test_kanglish_duplicate.py`, `backend/test_multilingual_duplicate.py`, `backend/test_civic_fixes_verification.py`.
 
 ---
 
@@ -409,22 +424,27 @@ flowchart TD
 ```mermaid
 flowchart TD
     Reg["Status: Registered\n(Officer Receives Notification)"] --> View["Officer Opens Dashboard Queue\n(/officer/dashboard)"]
-    View --> PrimaryTrans["Primary Display: Translated English\n(Quick triage without language barriers)"]
-    PrimaryTrans --> DualView["Preserved Native Audio & Text Access\n• Play original multilingual audio clip\n• View extracted/translated English meaning\n• Toggle 'View Original Citizen Text' on demand"]
-    DualView --> Accept["Officer Clicks 'Accept Case'\nStatus ➔ Accepted"]
+    View --> DualCard["Dual-Card Bilingual Presentation\n• Card 1: 'Original Complaint' (Verbatim Citizen Text + Audio)\n• Card 2: 'English Translation' (Normalized Operational Meaning)"]
+    DualCard --> AuditView["Inspect Evidence Audit\n• Badge: Image matches complaint / Image does not match complaint\n• SLA Time Remaining & Duration Pill"]
+    AuditView --> Accept["Officer Clicks 'Accept Case'\nStatus ➔ Accepted"]
     Accept --> Prog["Field Crew Dispatched\nStatus ➔ In Progress"]
     Prog --> Fix["Remediation Work Executed on Site"]
     Fix --> ValidReq["Mandatory Resolution Validation Gate\n• Mandatory 'After' Photo Proof (>= 2KB, Valid Dimensions)\n• Mandatory Descriptive Notes (>= 15 chars, explains action)\n• Rejection of empty, placeholder, or meaningless notes"]
-    ValidReq --> Resolved["Status ➔ Resolved\n(SLA Countdown Paused)"]
+    ValidReq --> Resolved["Status ➔ Resolved\nSaved as 'Officer Repair Verification (Completed)'\n(Distinguished from 'Citizen Evidence (Original)')"]
 ```
 
 #### How It Works (Short Description)
 * Provides a mobile-responsive dashboard for field officers (`/officer/dashboard`).
-* **Primary English Display with Original Text On-Demand**: English translated text serves as the primary officer display for standard operating efficiency, while officers can toggle to view the original raw citizen text when deeper local nuance is needed.
-* **Multilingual Audio Preservation**: The original citizen voice recording is preserved; officers can play the original audio clip and view its extracted and translated English meaning side-by-side.
+* **Dual-Section Translation Presentation**: Replaced single description display with dual, clearly-labeled cards:
+  1. **Original Complaint**: Displays the exact verbatim text submitted by the citizen (in native Kannada script, Kanglish, Hinglish, or English), along with the preserved audio player when voice evidence is available.
+  2. **English Translation**: Displays the AI-normalized English translation for immediate operational triage and work-order assignment without linguistic confusion.
+* **Separated Media Proof (Original vs. Repair)**: Media evidence is categorized and presented in distinct panels:
+  - **Citizen Evidence (Original)**: Initial incident photo uploaded by the reporting citizen (`image_type == "Reporting"`).
+  - **Officer Repair Verification (Completed)**: Post-remediation proof uploaded by the field crew (`image_type == "Resolution"`).
+* **Evidence Audit & Semantic Alignment Badge**: Displays the `image_verification_result` badge directly in the officer's case audit panel (*"Image matches complaint"* vs *"Image does not match complaint"*), alerting officers if the citizen's photo contradicts the complaint category.
 * **Mandatory After-Resolution Photo Proof**: A complaint cannot be marked `Resolved` without uploading a verified resolution proof image (min 2KB, valid dimensions $\ge 50\times 50\text{px}$, verified image integrity).
 * **Mandatory Descriptive Remediation Notes**: Requires descriptive notes explaining the actual physical action taken. Rejects empty notes, short notes ($< 15$ characters), and placeholders (`"done"`, `"fixed"`, `"resolved"`, `"ok"`, `"test"`, `"action taken"`).
-* **Key Files**: `frontend/src/app/officer/dashboard/page.tsx`, `backend/app/routers/complaints.py`, `backend/app/routers/officers.py`.
+* **Key Files**: `frontend/src/app/officer/dashboard/page.tsx`, `backend/app/routers/complaints.py`, `backend/app/routers/officers.py`, `backend/test_civic_fixes_verification.py`.
 
 ---
 
@@ -447,7 +467,8 @@ flowchart TD
 * Citizens view the "Before" vs "After" photos on their dashboard.
 * **Approved**: Ticket status becomes `Closed`, citizen submits a 1–5 star rating and optional comments.
 * **Rejected**: Ticket status returns to `Reopened`, increments `reopen_count`, and triggers an urgent re-dispatch alert to the officer.
-* **Key Files**: `frontend/src/app/citizen/dashboard/page.tsx`, `backend/app/routers/complaints.py`.
+* **Instant UI Synchronization & Action Guard**: Upon submitting verification (approve or reject), the Citizen Dashboard immediately updates local component state without requiring a manual page refresh. The "Verify Resolution" action button is automatically hidden once verification is completed (`citizen_verified == true`), displaying permanent feedback confirmation and preventing accidental duplicate submissions.
+* **Key Files**: `frontend/src/app/citizen/dashboard/page.tsx`, `backend/app/routers/complaints.py`, `backend/test_civic_fixes_verification.py`.
 
 ---
 
@@ -457,13 +478,14 @@ flowchart TD
 ```mermaid
 flowchart TD
     Clock["Live Time Monitoring Daemon\n(Periodic SLA Check)"] --> Calc["Calculate Elapsed Time vs SLA Deadline\n(Critical: 12h | High: 24h | Med: 48h | Low: 72h - Unchanged)"]
-    Calc --> EarlyWarn{"Elapsed < 75% & Phase 16 ML Breach Risk >= 60%?"}
+    Calc --> Meta["Compute SLA Summary Telemetry\n• sla_duration_hours & sla_duration_str ('12h (Critical)')\n• time_remaining_str ('Xh Ym remaining' / 'Overdue by Xh Ym')\n• resolution_sla_status ('Met SLA' vs 'Breached SLA')\n• is_breached Flag & Dynamic Breach Badges"]
+    Meta --> EarlyWarn{"Elapsed < 75% & Phase 16 ML Breach Risk >= 60%?"}
     EarlyWarn -->|Yes| AlertEarly["⚡ Predictive SLA Early Warning\n(Proactive notification before 75% threshold)"]
     EarlyWarn -->|No| StateCheck{"Elapsed SLA Percentage"}
     
     StateCheck -->|0% to 75%| Norm["SLA Status: Normal"]
     StateCheck -->|75% to 100%| Warn["SLA Status: Warning\nSend Proactive Alert to Officer"]
-    StateCheck -->|> 100% Unresolved| Breach["SLA Status: Breached\nSet is_escalated = True"]
+    StateCheck -->|> 100% Unresolved| Breach["SLA Status: Breached\nSet is_escalated = True\nRender Red 'Breached' Badges"]
     
     Breach --> ProgEsc{"Hours Overdue Progressive Escalation"}
     ProgEsc -->|<= 12 Hours| L1["Level 1: Escalated to Assistant Executive Engineer (AEE)"]
@@ -473,12 +495,17 @@ flowchart TD
 
 #### How It Works (Short Description)
 * **Unchanged Base SLA Flow**: Preserves the established standard SLA service charters: `Critical` 12h, `High` 24h, `Medium` 48h, `Low` 72h.
+* **Comprehensive SLA Duration & Time Remaining Telemetry**:
+  - `sla_duration_hours` & `sla_duration_str`: Explicitly exposes the allocated resolution window (e.g. *"12h (Critical)"*, *"24h (High)"*).
+  - `time_remaining_str`: Formats human-readable countdowns (*"14h 32m remaining"* or *"Overdue by 2h 10m"*).
+  - `resolution_sla_status`: Evaluates whether historical resolution satisfied the service charter (*"Met SLA"* vs *"Breached SLA"*).
+  - `is_breached`: Boolean indicator powering dynamic warning badges on Citizen and Officer dashboard ticket headers.
 * **Phase 16 Predictive SLA Early Warning**: Calls the predictive ML model before the 75% elapsed threshold; if predicted breach risk is $\ge 60\%$, an early alert is triggered before the conventional 75% warning.
 * **Progressive 3-Tier Escalation**: If a breached complaint remains unresolved, it escalates progressively:
   * **Level 1** ($\le 12\text{h}$ overdue): Escalated to Assistant Executive Engineer (AEE).
   * **Level 2** ($12\text{–}24\text{h}$ overdue): Escalated to Executive Engineer (EE).
   * **Level 3** ($> 24\text{h}$ overdue): Escalated to Chief Commissioner & Karnataka State Monitoring Cell.
-* **Key Files**: `backend/app/services/sla.py`, `backend/app/schemas/complaint.py`.
+* **Key Files**: `backend/app/services/sla.py`, `backend/app/schemas/complaint.py`, `frontend/src/app/citizen/dashboard/page.tsx`, `frontend/src/app/officer/dashboard/page.tsx`.
 
 ---
 
@@ -539,7 +566,8 @@ flowchart TD
     T3 --> T4["4. Multi-Word Phrase Translation Tests\n(test_multiword_phrase_translation.py)"]
     T4 --> T5["5. Officer Translated-Only Presentation Tests\n(test_officer_translated_only.py)"]
     T5 --> T6["6. End-to-End Workflow Integration Suite\n(test_e2e.py)"]
-    T6 --> Build["7. Frontend Production Build Check\n(npm run build)"]
+    T6 --> T7["7. 11-Fix Comprehensive Verification Suite\n(test_civic_fixes_verification.py)"]
+    T7 --> Build["8. Frontend Production Build Check\n(npm run build)"]
     Build --> Complete["System Verified: 100% Pass Rate\nProduction Ready"]
 ```
 
@@ -551,8 +579,10 @@ flowchart TD
   4. `test_multiword_phrase_translation.py`: Validates longest-first multi-word Kannada phrase replacement.
   5. `test_officer_translated_only.py`: Guarantees field officers never receive untranslated native script in queues.
   6. `test_e2e.py`: Executes 13-step comprehensive lifecycle test from registration to citizen verification.
+  7. `test_civic_fixes_verification.py`: Validates all 11 system enhancements (password visibility toggles, citizen dashboard eager loading, department routing rules for roads/waste, Kanglish vs genuine English with Indian locations, session persistence on refresh, SLA duration & resolution status metrics, multimodal duplicate image rejection, officer dual translation cards, image verification result badges, separated repair images, and citizen verification UI synchronization).
+  8. Frontend production build validation (`npm run build`) passing with zero errors across all static and dynamic routes.
 * Confirms zero regressions in ML inference, routing logic, SLA triggers, and Next.js frontend builds.
-* **Key Files**: `backend/test_e2e.py`, `backend/test_evidence_gates.py`, `backend/test_neon_connection.py`, `TESTING_GUIDE.md`.
+* **Key Files**: `backend/test_civic_fixes_verification.py`, `backend/test_e2e.py`, `backend/test_evidence_gates.py`, `backend/test_neon_connection.py`, `TESTING_GUIDE.md`.
 
 ---
 
@@ -562,18 +592,18 @@ flowchart TD
 |:---:|---|---|---|---|
 | **1** | Requirements & Domain | Specification Specs | Civic Problems | 4 Authorities, 47 Categories, Roles, State Rules |
 | **2** | System Architecture | FastAPI, Next.js 16 | System Scope | Modular skeleton, CORS, Routing |
-| **3** | Database & RBAC | Neon Cloud PostgreSQL, SQLAlchemy 2.0, JWT | User credentials | Neon DB pool, JWT tokens, Role guards, Tables |
+| **3** | Database & RBAC | Neon Cloud PostgreSQL, SQLAlchemy 2.0, JWT | User credentials | Neon DB pool, JWT tokens, Password toggles, Session persistence |
 | **4** | Karnataka Geography | Python Seeder (`seed.py`) | Civic structure | 4 Authorities, 8 Zones, 198 Wards, 47 Categories |
-| **5** | Multimodal Intake | React 19, Leaflet, MediaAPI | Citizen submission | Multi-part form payload (Audio, Photo, GPS) |
-| **6** | Translation & Clean | Google Translate + Local Multi-Word Fallback | Raw KN/EN/Hinglish | Normalized English text + Dual-field DB storage |
-| **7** | NLP & Priority AI | SentenceTransformers (`all-MiniLM-L6-v2`) | Clean text | 47-Category & Priority (`Critical` to `Low`) |
+| **5** | Multimodal Intake | React 19, Leaflet, MediaAPI | Citizen submission | Multi-part form payload, Fast decoupled complaint rendering |
+| **6** | Translation & Clean | Google Translate + Local Multi-Word Fallback | Raw KN/EN/Hinglish | Normalized English, Kanglish vs EN location preservation |
+| **7** | NLP & Priority AI | SentenceTransformers (`all-MiniLM-L6-v2`) | Clean text | Deterministic road/waste routing, 47 Categories, Priority |
 | **8** | YOLOv8 Computer Vision| Ultralytics YOLOv8n, OpenCV | Evidence photo | Detected objects & Quality Diagnostics |
-| **9** | Evidence Trust Scoring | Haversine + EXIF + 4 Hard Gates | GPS, Photo, Text | Composite Trust (0–100%) & Decision States |
-| **10** | Duplicate AI | Haversine (100m) + Translated Text Embeddings | New complaint | Unique ticket OR Linked duplicate (`impact_count`) |
+| **9** | Evidence Trust Scoring | Haversine + EXIF + 4 Hard Gates | GPS, Photo, Text | Composite Trust (0–100%), "Image matches/does not match" badge |
+| **10** | Duplicate AI | Haversine (100m) + Translated Text Embeddings | New complaint | Unique ticket OR Linked duplicate, Image mismatch rejection |
 | **11** | Smart Agency Routing | Least-Load Balancing | Verified ticket | Dispatched officer & Status update |
-| **12** | Officer Operations | Next.js Dashboard, Translated English View | Assigned case | Proof photo & Status = `Resolved` |
-| **13** | Citizen Verification | Next.js Dashboard, Rating | Resolution proof | `Closed` (Rating) OR `Reopened` |
-| **14** | SLA Escalation | Periodic Daemon | Active timers | `Normal` &rarr; `Warning` &rarr; `Breached` |
+| **12** | Officer Operations | Next.js Dashboard, Bilingual Display | Assigned case | Dual Original/Translated cards, Separated repair images |
+| **13** | Citizen Verification | Next.js Dashboard, Rating | Resolution proof | `Closed` (Rating) OR `Reopened`, Instant UI sync |
+| **14** | SLA Escalation | Periodic Daemon | Active timers | `Normal` &rarr; `Warning` &rarr; `Breached`, SLA duration & Met/Breached status |
 | **15** | GIS Analytics | Leaflet, React, ChartJS | Ticket telemetry | Spatial pins, Hotspot heatmaps |
 | **16** | Predictive ML | Scikit-Learn RandomForest | 128k records | SLA risk, Duration, 14-day forecasts |
-| **17** | E2E Testing & Hardening| Python Unittest Suites (7 Suites), Next Build | Full codebase | 100% test pass rate, Production build |
+| **17** | E2E Testing & Hardening| Python Unittest Suites (8 Suites), Next Build | Full codebase | 100% test pass rate, 11-fix verification, Production build |

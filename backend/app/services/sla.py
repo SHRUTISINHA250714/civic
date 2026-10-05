@@ -303,19 +303,85 @@ def get_sla_summary(complaint: Complaint) -> dict:
     sla_status_val, pct = get_sla_status(complaint)
     deadline_str = complaint.sla_deadline.isoformat() if complaint.sla_deadline else None
     hours_remaining: Optional[float] = None
-    if complaint.sla_deadline:
-        delta = (complaint.sla_deadline - datetime.utcnow()).total_seconds()
-        hours_remaining = round(delta / 3600, 2)
+    sla_duration_hours: Optional[float] = None
+    sla_duration_str: Optional[str] = None
+    time_remaining_str: Optional[str] = None
+    resolution_sla_status: str = "On Track"
+    is_breached = False
 
-    esc_level, esc_stage, hours_overdue = get_escalation_details(complaint)
-    is_early_warn, breach_prob, warn_msg = get_predictive_early_warning(complaint)
+    if complaint.sla_deadline and complaint.created_at:
+        dur_sec = (complaint.sla_deadline - complaint.created_at).total_seconds()
+        sla_duration_hours = round(dur_sec / 3600.0, 1)
+        if sla_duration_hours.is_integer():
+            sla_duration_str = f"{int(sla_duration_hours)}h"
+        else:
+            sla_duration_str = f"{sla_duration_hours}h"
+
+    is_resolved = complaint.status in ["Resolved", "Closed"]
+    resolved_time = None
+    if is_resolved:
+        if hasattr(complaint, "status_history") and complaint.status_history:
+            for sh in reversed(complaint.status_history):
+                if sh.status in ["Resolved", "Closed"]:
+                    resolved_time = sh.created_at
+                    break
+        if not resolved_time:
+            resolved_time = complaint.updated_at or complaint.created_at
+
+    if is_resolved:
+        if complaint.sla_deadline and resolved_time:
+            if resolved_time <= complaint.sla_deadline and (complaint.sla_status != "Breached"):
+                resolution_sla_status = "Resolved within SLA"
+                time_remaining_str = "Resolved on time"
+                is_breached = False
+            else:
+                resolution_sla_status = "Breached SLA"
+                overdue_h = round((resolved_time - complaint.sla_deadline).total_seconds() / 3600.0, 1)
+                time_remaining_str = f"Resolved after breach (+{max(0.1, overdue_h)}h)"
+                is_breached = True
+        else:
+            resolution_sla_status = "Resolved within SLA"
+            time_remaining_str = "Resolved"
+    else:
+        if complaint.sla_deadline:
+            delta = (complaint.sla_deadline - datetime.utcnow()).total_seconds()
+            hours_remaining = round(delta / 3600, 2)
+            if hours_remaining > 0:
+                h_int = int(hours_remaining)
+                m_int = int((hours_remaining - h_int) * 60)
+                time_remaining_str = f"{h_int}h {m_int}m left" if h_int > 0 else f"{m_int}m left"
+                if (complaint.sla_status or sla_status_val) == "Warning":
+                    resolution_sla_status = "Approaching SLA"
+                else:
+                    resolution_sla_status = "On Track"
+                is_breached = False
+            else:
+                overdue = round(abs(hours_remaining), 1)
+                time_remaining_str = f"Breached by {overdue}h"
+                resolution_sla_status = "SLA Breached"
+                is_breached = True
+        else:
+            resolution_sla_status = "On Track"
+            time_remaining_str = "No SLA"
+
+    effective_sla_status = "Breached" if is_breached else (complaint.sla_status or sla_status_val)
+    if is_resolved and not is_breached:
+        effective_sla_status = "Normal"
+
+    esc_level, esc_stage, hours_overdue = (None, None, None) if is_resolved else get_escalation_details(complaint)
+    is_early_warn, breach_prob, warn_msg = (False, None, None) if is_resolved else get_predictive_early_warning(complaint)
 
     return {
         "sla_deadline": deadline_str,
-        "sla_status": complaint.sla_status or sla_status_val,
+        "sla_status": effective_sla_status,
         "is_escalated": complaint.is_escalated or (esc_level is not None),
-        "pct_elapsed": round(min(pct, 1.0) * 100, 1),
+        "pct_elapsed": 100.0 if is_breached else (0.0 if is_resolved else round(min(pct, 1.0) * 100, 1)),
         "hours_remaining": hours_remaining,
+        "sla_duration_hours": sla_duration_hours,
+        "sla_duration_str": sla_duration_str,
+        "time_remaining_str": time_remaining_str,
+        "resolution_sla_status": resolution_sla_status,
+        "is_breached": is_breached,
         "predictive_early_warning": is_early_warn,
         "predictive_breach_prob": breach_prob,
         "predictive_message": warn_msg,
@@ -323,3 +389,4 @@ def get_sla_summary(complaint: Complaint) -> dict:
         "escalation_level": esc_level,
         "escalation_stage": esc_stage,
     }
+

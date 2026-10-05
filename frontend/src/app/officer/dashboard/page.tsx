@@ -81,9 +81,9 @@ export default function OfficerDashboard() {
 
   // Load user session
   useEffect(() => {
-    const userInfo = tokenStorage.getUserInfo();
-    if (!userInfo || userInfo.role !== "Officer") {
-      toast.error("Unauthorized access. Redirecting...");
+    const userInfo = tokenStorage.ensureSession("Officer");
+    if (!userInfo) {
+      toast.error("Session expired or unauthorized. Redirecting...");
       router.push("/login");
     } else {
       setUser(userInfo);
@@ -358,6 +358,23 @@ export default function OfficerDashboard() {
                         }`}>
                           {selectedComplaint.priority} Priority
                         </span>
+                        {selectedComplaint.sla_summary && (
+                          <span className={`text-[11px] font-bold px-2 py-0.5 rounded-full flex items-center gap-1 ${
+                            selectedComplaint.sla_summary.is_breached || selectedComplaint.sla_summary.sla_status === 'Breached'
+                              ? 'bg-rose-100 text-rose-700 dark:bg-rose-950/40 dark:text-rose-400 border border-rose-300'
+                              : selectedComplaint.sla_summary.sla_status === 'Warning'
+                              ? 'bg-amber-100 text-amber-700 dark:bg-amber-950/40 dark:text-amber-400 border border-amber-300'
+                              : 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-400 border border-emerald-300'
+                          }`}>
+                            <Clock className="h-3 w-3" />
+                            {selectedComplaint.sla_summary.is_breached || selectedComplaint.sla_summary.sla_status === 'Breached'
+                              ? '🚨 SLA Breached'
+                              : selectedComplaint.status === 'Resolved' || selectedComplaint.status === 'Closed'
+                              ? selectedComplaint.sla_summary.resolution_sla_status || 'Resolved within SLA'
+                              : selectedComplaint.sla_summary.time_remaining_str || 'On Track'}
+                            {selectedComplaint.sla_summary.sla_duration_str && ` (${selectedComplaint.sla_summary.sla_duration_str} SLA)`}
+                          </span>
+                        )}
                       </div>
                     </div>
                     <span className="text-[10px] font-mono bg-slate-100 dark:bg-slate-800 px-2 py-0.5 rounded uppercase font-bold text-slate-500">ID: #{selectedComplaint.id}</span>
@@ -369,38 +386,41 @@ export default function OfficerDashboard() {
                       <span>{selectedComplaint.location_address || "Coordinates only"}</span>
                     </span>
                   </div>
-                  <div>
-                    <div className="flex items-center justify-between">
-                      <span className="text-[10px] font-bold text-slate-400 block uppercase">
-                        Primary Grievance Description (English Translated)
-                      </span>
-                      {selectedComplaint.original_description && (
-                        <button
-                          type="button"
-                          onClick={() => setShowOriginalText(!showOriginalText)}
-                          className="text-[10px] font-bold text-blue-600 hover:text-blue-700 dark:text-blue-400 flex items-center gap-1 cursor-pointer bg-blue-50 dark:bg-blue-950/40 px-2 py-0.5 rounded border border-blue-200 dark:border-blue-800 transition"
-                        >
-                          {showOriginalText ? "Hide Original Citizen Text" : "👁️ View Original Citizen Text"}
-                        </button>
-                      )}
-                    </div>
-                    <p className="text-xs text-slate-700 dark:text-slate-350 italic font-semibold mt-1 bg-slate-50 dark:bg-slate-850 p-2.5 rounded-lg border border-slate-100 dark:border-slate-800/40">
-                      "{selectedComplaint.description || "Translation unavailable"}"
-                    </p>
-                    {showOriginalText && selectedComplaint.original_description && (
-                      <div className="mt-2 p-2.5 bg-amber-50/80 dark:bg-amber-950/30 rounded-lg border border-amber-200 dark:border-amber-800/60 animate-fade-in">
-                        <div className="flex items-center justify-between mb-1 text-[10px] font-bold text-amber-800 dark:text-amber-300">
-                          <span>Original Citizen Submission ({selectedComplaint.detected_language || selectedComplaint.language || "Regional"})</span>
-                          <span className="text-[9px] font-mono bg-amber-200/70 dark:bg-amber-900/50 px-1.5 py-0.2 rounded">Raw Citizen Input</span>
-                        </div>
-                        <p className="text-xs text-amber-950 dark:text-amber-100 font-medium">
-                          "{selectedComplaint.original_description}"
-                        </p>
+
+                  {/* Dual Grievance Display: Original Complaint & English Translation (Requirement 8) */}
+                  <div className="space-y-3">
+                    {/* Original Complaint Box */}
+                    <div className="p-3 bg-amber-50/70 dark:bg-amber-950/20 rounded-lg border border-amber-200/80 dark:border-amber-800/50">
+                      <div className="flex items-center justify-between mb-1.5 text-[10px] font-bold text-amber-800 dark:text-amber-300">
+                        <span className="flex items-center gap-1.5 uppercase tracking-wide">
+                          <span>📝</span> Original Complaint
+                        </span>
+                        <span className="text-[9px] font-mono bg-amber-200/60 dark:bg-amber-900/40 px-1.5 py-0.5 rounded text-amber-900 dark:text-amber-200">
+                          {selectedComplaint.detected_language || selectedComplaint.language || "Citizen Submission"}
+                        </span>
                       </div>
-                    )}
+                      <p className="text-xs text-amber-950 dark:text-amber-100 font-medium leading-relaxed whitespace-pre-wrap">
+                        "{selectedComplaint.original_description || selectedComplaint.description}"
+                      </p>
+                    </div>
+
+                    {/* English Translation Box */}
+                    <div className="p-3 bg-blue-50/70 dark:bg-blue-950/20 rounded-lg border border-blue-200/80 dark:border-blue-800/50">
+                      <div className="flex items-center justify-between mb-1.5 text-[10px] font-bold text-blue-800 dark:text-blue-300">
+                        <span className="flex items-center gap-1.5 uppercase tracking-wide">
+                          <span>🌐</span> English Translation
+                        </span>
+                        <span className="text-[9px] font-mono bg-blue-200/60 dark:bg-blue-900/40 px-1.5 py-0.5 rounded text-blue-900 dark:text-blue-200">
+                          AI Verified English
+                        </span>
+                      </div>
+                      <p className="text-xs text-blue-950 dark:text-blue-100 font-semibold leading-relaxed whitespace-pre-wrap">
+                        "{selectedComplaint.description || "Translation unavailable"}"
+                      </p>
+                    </div>
                   </div>
 
-                  {/* Multilingual Voice Note Audio Evidence & Meaning (Phase 12 Requirement 2) */}
+                  {/* Multilingual Voice Note Audio Evidence & Meaning */}
                   {selectedComplaint.audio_url && (
                     <div className="bg-indigo-50/80 dark:bg-indigo-950/30 p-3 rounded-lg border border-indigo-200 dark:border-indigo-800 space-y-2">
                       <div className="flex items-center justify-between text-indigo-700 dark:text-indigo-300 text-xs font-bold">
@@ -425,18 +445,29 @@ export default function OfficerDashboard() {
                   )}
 
                   {selectedComplaint.evidence_check && (
-                    <div className="bg-slate-50 dark:bg-slate-850 p-2.5 rounded-lg border border-slate-100 dark:border-slate-800/40">
-                      <div className="flex items-center justify-between mb-1">
+                    <div className="bg-slate-50 dark:bg-slate-850 p-2.5 rounded-lg border border-slate-100 dark:border-slate-800/40 space-y-1.5">
+                      <div className="flex items-center justify-between flex-wrap gap-1">
                         <span className="text-[10px] font-bold text-slate-400 uppercase">Evidence Audit</span>
-                        <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
-                          selectedComplaint.evidence_check.verification_decision === 'VERIFIED'
-                            ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-300'
-                            : selectedComplaint.evidence_check.verification_decision === 'REJECTED'
-                            ? 'bg-rose-100 text-rose-800 dark:bg-rose-950/40 dark:text-rose-300'
-                            : 'bg-amber-100 text-amber-800 dark:bg-amber-950/40 dark:text-amber-300'
-                        }`}>
-                          {selectedComplaint.evidence_check.verification_decision} ({Math.round(selectedComplaint.evidence_check.trust_score)}%)
-                        </span>
+                        <div className="flex items-center gap-1.5">
+                          {selectedComplaint.evidence_check.image_verification_result ? (
+                            <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${
+                              selectedComplaint.evidence_check.image_verification_result === 'Image matches complaint'
+                                ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-300 border-emerald-300'
+                                : 'bg-rose-100 text-rose-800 dark:bg-rose-950/40 dark:text-rose-300 border-rose-300'
+                            }`}>
+                              {selectedComplaint.evidence_check.image_verification_result === 'Image matches complaint' ? '✅ Image matches complaint' : '⛔ Image does not match complaint'}
+                            </span>
+                          ) : null}
+                          <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
+                            selectedComplaint.evidence_check.verification_decision === 'VERIFIED'
+                              ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-300'
+                              : selectedComplaint.evidence_check.verification_decision === 'REJECTED'
+                              ? 'bg-rose-100 text-rose-800 dark:bg-rose-950/40 dark:text-rose-300'
+                              : 'bg-amber-100 text-amber-800 dark:bg-amber-950/40 dark:text-amber-300'
+                          }`}>
+                            {selectedComplaint.evidence_check.verification_decision} ({Math.round(selectedComplaint.evidence_check.trust_score)}%)
+                          </span>
+                        </div>
                       </div>
                       <p className="text-[10px] text-slate-500 dark:text-slate-400">
                         {selectedComplaint.evidence_check.verification_details}
@@ -445,29 +476,62 @@ export default function OfficerDashboard() {
                   )}
                 </div>
 
-                {/* Media columns */}
-                <div className="space-y-4">
-                  <span className="text-[10px] font-bold text-slate-400 block uppercase mb-1">Attached Media Evidence</span>
-                  {selectedComplaint.images && selectedComplaint.images.length > 0 ? (
-                    <div className="grid grid-cols-2 gap-2">
-                      {selectedComplaint.images.map((img: any) => (
-                        <div key={img.id} className="relative aspect-square bg-slate-100 dark:bg-slate-800 rounded-lg overflow-hidden border border-slate-200 dark:border-slate-800">
-                          <img 
-                            src={`http://127.0.0.1:8000${img.image_url}`} 
-                            alt={img.image_type}
-                            className="w-full h-full object-cover"
-                          />
-                          <div className="absolute bottom-0 inset-x-0 bg-slate-900/60 p-1 text-[8px] text-white text-center font-bold">
-                            {img.image_type} ({img.is_verified ? "Verified" : "Unverified"})
+                {/* Media columns: Distinct Citizen Evidence vs Officer Repair Verification Image (Requirement 10) */}
+                <div className="space-y-3">
+                  <span className="text-[10px] font-bold text-slate-400 block uppercase">Media Evidence & Proof</span>
+
+                  {/* 1. Citizen Reporting Evidence */}
+                  <div>
+                    <span className="text-[9px] font-bold text-slate-500 uppercase block mb-1">Citizen Evidence (Original)</span>
+                    {selectedComplaint.images && selectedComplaint.images.filter((img: any) => img.image_type === 'Reporting').length > 0 ? (
+                      <div className="grid grid-cols-2 gap-2">
+                        {selectedComplaint.images.filter((img: any) => img.image_type === 'Reporting').map((img: any) => (
+                          <div key={img.id} className="relative aspect-square bg-slate-100 dark:bg-slate-800 rounded-lg overflow-hidden border border-slate-200 dark:border-slate-800">
+                            <img 
+                              src={`http://127.0.0.1:8000${img.image_url}`} 
+                              alt="Citizen Evidence"
+                              className="w-full h-full object-cover"
+                            />
+                            <div className="absolute bottom-0 inset-x-0 bg-slate-900/75 p-1 text-[8px] text-white text-center font-bold">
+                              Citizen Evidence ({img.is_verified ? "Verified" : "Under Review"})
+                            </div>
                           </div>
-                        </div>
-                      ))}
-                    </div>
-                  ) : (
-                    <div className="h-28 bg-slate-50 dark:bg-slate-850 rounded-lg border border-dashed border-slate-200 dark:border-slate-800 flex items-center justify-center text-xs text-slate-400">
-                      No initial photo attached
-                    </div>
-                  )}
+                        ))}
+                      </div>
+                    ) : (
+                      <div className="h-20 bg-slate-50 dark:bg-slate-850 rounded-lg border border-dashed border-slate-200 dark:border-slate-800 flex items-center justify-center text-[11px] text-slate-400">
+                        No initial photo attached
+                      </div>
+                    )}
+                  </div>
+
+                  {/* 2. Officer Post-Repair Verification Evidence (Requirement 10) */}
+                  <div>
+                    <span className="text-[9px] font-bold text-slate-500 uppercase block mb-1">Officer Repair Verification (Completed)</span>
+                    {selectedComplaint.images && selectedComplaint.images.filter((img: any) => img.image_type === 'Resolution').length > 0 ? (
+                      <div className="grid grid-cols-2 gap-2">
+                        {selectedComplaint.images.filter((img: any) => img.image_type === 'Resolution').map((img: any) => (
+                          <div key={img.id} className="relative aspect-square bg-slate-100 dark:bg-slate-800 rounded-lg overflow-hidden border-2 border-emerald-500/80">
+                            <img 
+                              src={`http://127.0.0.1:8000${img.image_url}`} 
+                              alt="Officer Repair Verification"
+                              className="w-full h-full object-cover"
+                            />
+                            <div className="absolute top-1 left-1 bg-emerald-600 text-white text-[8px] font-bold px-1.5 py-0.5 rounded shadow">
+                              ✅ Post-Repair Proof
+                            </div>
+                            <div className="absolute bottom-0 inset-x-0 bg-emerald-950/80 p-1 text-[8px] text-emerald-200 text-center font-bold">
+                              Repaired Site Photo
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <div className="h-20 bg-slate-50 dark:bg-slate-850 rounded-lg border border-dashed border-slate-200 dark:border-slate-800 flex items-center justify-center text-[11px] text-slate-400">
+                        {selectedComplaint.status === 'Resolved' || selectedComplaint.status === 'Closed' ? 'No repair photo uploaded' : 'Repair photo will appear here once resolved'}
+                      </div>
+                    )}
+                  </div>
                 </div>
               </div>
 

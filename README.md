@@ -19,48 +19,46 @@ The platform is wired to four core municipal and utility agencies:
 
 ## 🚀 Key System Features
 
-* **Multilingual NLP Pipeline**: Automatic detection of Kannada, Kanglish, Hinglish, and English with automated English translation and zero-shot grievance classification.
+* **Multilingual NLP Pipeline & Kanglish Boundary Precision**: Automatic detection of Kannada, Kanglish, Hinglish, and English with automated English translation and zero-shot grievance classification. Uses strict word boundaries to preserve genuine English containing Indian location names (e.g. "MG Road", "Indiranagar", "Koramangala") without false transliteration.
+* **Deterministic Department Routing**: Rule-based precedence routing grievances accurately to the responsible Karnataka authority (potholes and road damage to BBMP `Potholes & Damaged Roads`, garbage and litter to BSWML, water and sewage to BWSSB, high-voltage power to BESCOM).
 * **YOLOv8 & OpenCV Vision Analysis**: Real-time object detection and OpenCV quality diagnostics (evaluating blurriness via Laplacian variance, exposure levels, and resolution).
 * **4-Gate Evidence Verification Engine**: Multi-gate validation preventing fraudulent submissions:
   1. *Geo*: Live device GPS cross-referenced against EXIF GPS coordinates ($\le 500\text{m}$ match, $\ge 5000\text{m}$ severe mismatch) with device accuracy radius.
   2. *Timestamp Freshness*: Rejects future timestamps ($> 10\text{m}$) and flags stale photos ($> 72\text{h}$).
   3. *Semantic Agreement*: SentenceTransformers cosine matching ensuring photo matches reported category. Cross-category mismatches (e.g. pothole complaint with garbage photo) strictly locked to `REJECTED`.
   4. *Duplicate Image Detection*: 64-bit difference perceptual hashing (`dHash`) with Hamming distance $\le 4$ detecting recycled photos across complaints.
-  * *Decisions*: `VERIFIED`, `PARTIALLY_VERIFIED`, `MANUAL_REVIEW`, `SUSPICIOUS`, `REJECTED`.
-* **Geospatial Duplicate Detection**: 100m radius duplicate scan with cosine text similarity to group duplicate complaints and prevent ticket flooding.
-* **Dynamic SLA Enforcement**: Priority-driven timers (Low: 72h, Medium: 48h, High: 24h, Critical: 12h) with auto-escalation upon breach.
-* **Citizen Proof Verification**: Citizens inspect officer resolution proof photos to approve closure (with 1–5 star ratings) or trigger automated re-dispatch.
+  * *Standardized Verification Badges*: Displays user-facing badges (*"Image matches complaint"* vs *"Image does not match complaint"*).
+* **Multimodal Duplicate Detection Guard**: 100m radius duplicate scan with cosine text similarity. Evaluates visual evidence *before* duplicate clustering, rejecting complaints with mismatched images (`MISMATCH`) from linking to active tickets.
+* **Dynamic SLA Enforcement & Duration Tracking**: Priority-driven timers (Low: 72h, Medium: 48h, High: 24h, Critical: 12h) displaying explicit duration strings, live remaining time countdowns, dynamic red breach warning pills, and resolution compliance (*"Met SLA"* vs *"Breached SLA"*).
+* **Bilingual Officer Operations**: Field officers view dual clearly-labeled sections: *"Original Complaint"* (verbatim citizen text + native audio player) and *"English Translation"* (normalized operational triage), with separate inspection of *"Citizen Evidence (Original)"* vs *"Officer Repair Verification (Completed)"*.
+* **Citizen Proof Verification & Instant UI Sync**: Citizens inspect officer resolution proof photos to approve closure (with 1–5 star ratings) or trigger automated re-dispatch, with immediate local state synchronization hiding the verification prompt once completed.
+* **High-Performance Citizen Dashboard**: Decoupled complaint loading from nearby geo-queries combined with backend SQLAlchemy eager loading (`joinedload` / `selectinload`), eliminating N+1 queries.
+* **Security & Session Persistence**: Interactive password visibility toggles (`Eye`/`EyeOff`) and dual-storage fallback (`tokenStorage.ensureSession`) preventing logout drops on page refreshes.
 * **Phase 16 Predictive Analytics**: Random Forest machine learning models trained on historical Janahita datasets for 14-day grievance intake forecasting and SLA breach risk scoring.
 
 ---
 
 ## 🔄 Recent Updates & Changelog
-*(As of September 2026 — Infrastructure & AI Pipeline Enhancements)*
 
-### 1. Database Migration to Neon (Cloud PostgreSQL)
-- Migrated from local PostgreSQL to Neon serverless cloud PostgreSQL via `DATABASE_URL` environment configuration.
-- Implemented SSL enforcement (`sslmode=require`), production connection pooling (`pool_pre_ping`, `pool_size`, `max_overflow`, `pool_recycle`), and 3-attempt startup retry logic to gracefully handle Neon free-tier cold starts.
-- Updated project execution instructions to use Neon cloud database connections as default/recommended, retaining local PostgreSQL as a developer fallback option.
+### October 2026 — 11 Platform Fixes & Operational Enhancements
+1. **Password Visibility Toggle**: Interactive `Eye` / `EyeOff` icons on password and confirm-password fields in `/login` and `/register`.
+2. **Citizen Dashboard Performance Optimization**: Decoupled primary complaint fetching from secondary nearby geolocation scans, powered by SQLAlchemy eager loading (`joinedload` on category, department, officer, user and `selectinload` on images).
+3. **Deterministic Department Routing**: Rule-based priority guard mapping potholes & road damage (including MG Road complaints) strictly to BBMP `Potholes & Damaged Roads`, and garbage/waste strictly to BSWML.
+4. **Kanglish vs. Genuine English Detection Fix**: Token word-boundary matching (`\b[a-zA-Z]+\b`) preserving genuine English text with Indian location entities as `en` without false Indic transliteration.
+5. **Dual-Storage Session Persistence on Refresh**: Integrated `tokenStorage.ensureSession(expectedRole)` with `localStorage` + `sessionStorage` fallback, preventing premature logouts on browser refresh.
+6. **Comprehensive SLA Duration, Remaining Time & Resolution Status**: Computed `sla_duration_str` (e.g. "12h (Critical)"), live `time_remaining_str`, resolution status (*"Met SLA"* vs *"Breached SLA"*), and dynamic breach warning badges.
+7. **Multimodal Duplicate Detection Guard**: Evaluates image evidence *before* duplicate clustering, rejecting complaints with mismatched images (`image_semantic_status == "MISMATCH"`) from linking to existing tickets.
+8. **Officer Dashboard Dual Translation Display**: Replaced single text display with dual, clearly-labeled cards for *"Original Complaint"* and *"English Translation"*.
+9. **Standardized Image-Complaint Verification Badges**: Exposed `image_verification_result` (*"Image matches complaint"* vs *"Image does not match complaint"*) across complaint cards and audit panels.
+10. **Officer Repair Verification Image Separation**: Distinct categorization and UI display of *"Citizen Evidence (Original)"* vs *"Officer Repair Verification (Completed)"*.
+11. **Citizen Resolution Verification UI Synchronization**: Instant local state update upon submitting resolution approval/rejection, hiding the "Verify Resolution" action button once completed.
 
-### 2. Duplicate Detection Fix — Translated Text Embedding
-- Fixed a bug in `backend/app/services/duplicate.py` where duplicate detection was generating embeddings from raw, untranslated complaint text instead of translated English text.
-- Duplicate detection now reliably computes embeddings on translated English descriptions across all complaints regardless of submission language or script, with fallback handling for missing translations.
-
-### 3. Language Detection Fix — Kanglish/Hinglish Translation Bypass
-- Fixed an issue in `backend/app/services/ai.py` where `langdetect` misclassified Romanized Kanglish/Hinglish text (Kannada/Hindi written in Latin script) as English, silently skipping translation.
-- Enforced translation unless text is verified high-confidence English (`langdetect` confidence > 0.95) with zero Indic/Kanglish/Hinglish marker words or Kannada script, ensuring all mixed-language complaints are translated before classification and duplicate checking.
-
-### 4. Translation Fix — Multi-Word Kannada Phrase Matching
-- Resolved a bug in the Tier 2 local dictionary translation fallback (used when online translation is unavailable or rate-limited) where multi-word Kannada dictionary entries (e.g., "ಬೀದಿ ದೀಪ" / streetlight) failed to match due to single-word tokenization.
-- The fallback normalizer now matches multi-word phrases against full text first (longest phrases first) before single-word lookup, preventing misclassifications during fallback operation.
-
-### 5. Officer Dashboard — Translated-Only Text Display
-- Fixed an issue where the Officer Dashboard and officer-facing API endpoints exposed raw, untranslated Kannada, Hinglish, or Kanglish text to field officers.
-- Officers now view strictly translated English descriptions across all complaint queues (with fallback indicators for missing translations), while citizens continue to see their original submitted text.
-
-### 6. Category Routing Data Consistency Fix
-- Resolved data drift between hardcoded category definitions in `backend/app/services/ai.py` (`CATEGORY_HIERARCHY`) and the database-seeded `complaint_categories` table.
-- Added missing `"Lakes & Water Bodies"` (BBMP, High priority) and updated `"Distribution Feeder & Cable Fault"` to `"Streetlight Power Supply Fault"` (BESCOM, Medium priority) in-place to preserve foreign key references, confirming 1:1 parity (47 categories) across code and database.
+### Infrastructure & Architectural Baseline
+* **Database Migration to Neon (Cloud PostgreSQL)**: Serverless cloud PostgreSQL with SSL enforcement (`sslmode=require`), connection pooling (`pool_pre_ping`, `pool_recycle`), and 3-attempt startup retry backoff.
+* **Translated-Text Embedding for Spatial Duplicate Detection**: Generated SentenceTransformer embeddings strictly on translated English text across Kannada, Kanglish, Hinglish, and English submissions.
+* **Longest-First Multi-Word Kannada Phrase Matching**: Offline local dictionary evaluates multi-word phrases first before token lookup.
+* **1:1 Taxonomy & Database Category Parity**: Synchronized all 47 standardized categories between database seeder and AI taxonomy.
+* **Compulsory Photographic Evidence & Address Context**: Mandatory image upload enforcement at frontend validation and backend API entry, paired with typed street address / landmark input.
 
 ---
 
@@ -131,6 +129,10 @@ All default test accounts are seeded via `python -m backend.app.seed`:
 * **Interactive Manual Testing Guide**: Full 8-track walkthrough in [TESTING_GUIDE.md](file:///c:/Users/Lenovo/Desktop/CIVIC/TESTING_GUIDE.md).
 * **Complete System Documentation & Architecture**: [PROJECT_DOCUMENTATION.md](file:///c:/Users/Lenovo/Desktop/CIVIC/PROJECT_DOCUMENTATION.md).
 * **17-Phase Implementation Blueprint**: [phases.md](file:///c:/Users/Lenovo/Desktop/CIVIC/phases.md).
+* **11-Fix Comprehensive Verification Suite**:
+  ```powershell
+  python backend/test_civic_fixes_verification.py
+  ```
 * **Automated Evidence Hard Gates Test Suite (11 Scenarios)**:
   ```powershell
   python -m backend.test_evidence_gates
@@ -139,45 +141,17 @@ All default test accounts are seeded via `python -m backend.app.seed`:
   ```powershell
   python backend/test_e2e.py
   ```
-
-
-Ensure your `DATABASE_URL` environment variable is set in `.env` (Neon cloud PostgreSQL or local `localhost:5432`).
-
-1️⃣ Terminal 1: Backend API (FastAPI)
-# 1. Navigate to the root directory
-cd /Users/raksh/Ishu/civic
-
-# 2. Activate the virtual environment
-source venv/bin/activate
-
-# 3. Seed the database with default departments, wards, and test users (Run this first time)
-python -m backend.app.seed
-
-# 4. Start the FastAPI development server
-uvicorn backend.app.main:app --host 127.0.0.1 --port 8000 --reload
-
-
-
-
-2️⃣ Terminal 2: Frontend Web Portal (Next.js)
-# 1. Navigate to the frontend directory
-cd /Users/raksh/Ishu/civic/frontend
-
-# 2. Install dependencies (only needed once or after updating packages)
-npm install
-
-# 3. Start the Next.js development server
-npm run dev
-
-
-
-
-Running Automated Test Suites
-cd /Users/raksh/Ishu/civic
-source venv/bin/activate
-
-# Run full 17-Phase End-to-End Workflow Verification Suite
-python backend/test_e2e.py
-
-# Run Phase 10 Duplicate Prevention & Impact Tracking Suite
-python backend/test_phase10_duplicate_ux.py
+* **Multilingual & Kanglish Duplicate Detection Tests**:
+  ```powershell
+  python backend/test_kanglish_duplicate.py
+  python backend/test_multilingual_duplicate.py
+  ```
+* **Phase 10 Duplicate Prevention & Impact Tracking Suite**:
+  ```powershell
+  python backend/test_phase10_duplicate_ux.py
+  ```
+* **Frontend Production Build Verification**:
+  ```powershell
+  cd frontend
+  npm run build
+  ```

@@ -25,25 +25,66 @@ const MapComponent = dynamic(() => import('@/components/MapComponent'), {
 });
 
 // ── Helper: SLA progress bar ────────────────────────────────────────────────
-function SLABar({ slaSummary }: { slaSummary: any }) {
+function SLABar({ slaSummary, status }: { slaSummary: any; status?: string }) {
   if (!slaSummary) return null;
-  const pct = Math.min(slaSummary.pct_elapsed, 100);
+
+  const isResolved = status === 'Resolved' || status === 'Closed';
+  const isBreached = slaSummary.is_breached || slaSummary.sla_status === 'Breached';
+  const duration = slaSummary.sla_duration_str ? `${slaSummary.sla_duration_str} SLA` : null;
+  const timeRemaining = slaSummary.time_remaining_str;
+  const resolutionStatus = slaSummary.resolution_sla_status || (isBreached ? 'Breached SLA' : 'Resolved within SLA');
+
+  if (isResolved) {
+    const isResolvedWithinSLA = resolutionStatus === 'Resolved within SLA';
+    return (
+      <div className="mt-2 p-2 rounded-lg border bg-slate-50/70 dark:bg-slate-800/40 border-slate-200/60 dark:border-slate-800 text-[10px]">
+        <div className="flex items-center justify-between font-bold">
+          <span className={`inline-flex items-center gap-1 ${isResolvedWithinSLA ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'}`}>
+            {isResolvedWithinSLA ? '✅ Resolved within SLA' : '🚨 Breached SLA Before Resolution'}
+          </span>
+          {duration && <span className="text-slate-400 font-mono text-[9px]">{duration}</span>}
+        </div>
+        {timeRemaining && (
+          <div className="text-[9px] text-slate-500 dark:text-slate-400 mt-0.5 font-medium">
+            {timeRemaining}
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  const pct = Math.min(slaSummary.pct_elapsed || 0, 100);
   const color =
-    slaSummary.sla_status === 'Breached' ? 'bg-red-500' :
+    isBreached ? 'bg-red-500' :
     slaSummary.sla_status === 'Warning'  ? 'bg-amber-500' :
     'bg-emerald-500';
+
   const label =
-    slaSummary.sla_status === 'Breached' ? '🚨 SLA Breached' :
-    slaSummary.sla_status === 'Warning'  ? '⚠️ SLA Warning' : '✅ On Track';
+    isBreached ? '🚨 SLA Breached' :
+    slaSummary.sla_status === 'Warning'  ? '⚠️ Approaching SLA' : '✅ On Track';
+
   return (
-    <div className="mt-2">
-      <div className="flex items-center justify-between text-[10px] font-bold text-slate-500 mb-1">
-        <span>{label}</span>
-        <span>{pct.toFixed(0)}% elapsed</span>
+    <div className="mt-2 space-y-1">
+      <div className="flex items-center justify-between text-[10px] font-bold">
+        <span className={isBreached ? 'text-red-600 dark:text-red-400 font-extrabold flex items-center gap-1' : slaSummary.sla_status === 'Warning' ? 'text-amber-600 dark:text-amber-400' : 'text-emerald-600 dark:text-emerald-400'}>
+          {label}
+        </span>
+        <div className="flex items-center gap-1.5 text-[9px] text-slate-500 font-mono">
+          {duration && <span className="bg-slate-100 dark:bg-slate-800 px-1 rounded">{duration}</span>}
+          <span>{pct.toFixed(0)}% elapsed</span>
+        </div>
       </div>
       <div className="w-full bg-slate-100 dark:bg-slate-800 rounded-full h-1.5">
         <div className={`h-1.5 rounded-full transition-all ${color}`} style={{ width: `${pct}%` }} />
       </div>
+      {timeRemaining && (
+        <div className="flex items-center justify-between text-[9px] text-slate-400">
+          <span className="font-medium text-slate-500 dark:text-slate-400">{timeRemaining}</span>
+          {slaSummary.sla_deadline && (
+            <span className="text-[8px]">Target: {new Date(slaSummary.sla_deadline).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+          )}
+        </div>
+      )}
     </div>
   );
 }
@@ -236,25 +277,33 @@ export default function CitizenDashboard() {
 
   async function loadDashboardData() {
     try {
-      const [statsData, complaintsData, nearby, deptsData] = await Promise.all([
-        api.getDashboardStats('citizen'),
-        api.getComplaints(),
-        api.getNearbyComplaints(12.971598, 77.594562, 5000),
-        api.getDepartmentsAndCategories().catch(() => []),
-      ]);
-      setStats(statsData);
-      setComplaints(complaintsData);
-      setNearbyComplaints(nearby);
-      if (deptsData && Array.isArray(deptsData)) {
-        setDepartments(deptsData);
-      }
+      // 1. Fetch complaints immediately for fastest interactive render
+      api.getComplaints().then((complaintsData) => {
+        setComplaints(complaintsData || []);
+      }).catch((err) => console.error("Error loading complaints:", err));
+
+      // 2. Fetch stats and department options in parallel
+      api.getDashboardStats('citizen').then((statsData) => {
+        setStats(statsData);
+      }).catch((err) => console.error("Error loading stats:", err));
+
+      api.getDepartmentsAndCategories().then((deptsData) => {
+        if (deptsData && Array.isArray(deptsData)) {
+          setDepartments(deptsData);
+        }
+      }).catch(() => []);
+
+      // 3. Nearby complaints in background
+      api.getNearbyComplaints(12.971598, 77.594562, 5000).then((nearby) => {
+        setNearbyComplaints(nearby || []);
+      }).catch((err) => console.error("Error loading nearby:", err));
     } catch (err) { console.error(err); }
   }
 
   useEffect(() => {
-    const userInfo = tokenStorage.getUserInfo();
-    if (!userInfo || userInfo.role !== 'Citizen') {
-      toast.error('Unauthorized access. Redirecting...');
+    const userInfo = tokenStorage.ensureSession('Citizen');
+    if (!userInfo) {
+      toast.error('Session expired or unauthorized. Redirecting...');
       router.push('/login');
     } else {
       setUser(userInfo);
@@ -432,9 +481,23 @@ export default function CitizenDashboard() {
         feedback_rating: feedbackRating,
         feedback_remarks: feedbackRemarks,
       });
-      toast.success(approve ? 'Complaint closed! Thank you.' : 'Complaint reopened. Officer will re-address it.');
+      toast.success(approve ? 'Resolution verified & complaint closed! Thank you.' : 'Resolution rejected. Complaint reopened for officer.');
       setIsVerifyModalOpen(false);
-      setSelectedComplaint(null);
+      // Synchronize UI state immediately so verify button disappears and resolved state is confirmed
+      setComplaints((prev) =>
+        prev.map((c) =>
+          c.id === verifyComplaint.id
+            ? { ...c, status: approve ? 'Closed' : 'Reopened', citizen_verified: approve, citizen_feedback_rating: feedbackRating, citizen_feedback_remarks: feedbackRemarks }
+            : c
+        )
+      );
+      if (selectedComplaint?.id === verifyComplaint.id) {
+        setSelectedComplaint((prev: any) =>
+          prev
+            ? { ...prev, status: approve ? 'Closed' : 'Reopened', citizen_verified: approve, citizen_feedback_rating: feedbackRating, citizen_feedback_remarks: feedbackRemarks }
+            : null
+        );
+      }
       loadDashboardData();
     } catch (err: any) {
       toast.error(err.message || 'Action failed.');
@@ -545,8 +608,8 @@ export default function CitizenDashboard() {
                   )}
 
                   {/* SLA bar on card */}
-                  {c.sla_summary && c.status !== 'Closed' && (
-                    <SLABar slaSummary={c.sla_summary} />
+                  {c.sla_summary && (
+                    <SLABar slaSummary={c.sla_summary} status={c.status} />
                   )}
 
                   {/* Evidence trust & gate badge */}
@@ -555,6 +618,15 @@ export default function CitizenDashboard() {
                       <TrustBadge level={c.evidence_check.trust_level} score={Math.round(c.evidence_check.trust_score)} />
                       {c.evidence_check.verification_decision && (
                         <VerificationGateBadge decision={c.evidence_check.verification_decision} />
+                      )}
+                      {c.evidence_check.image_verification_result && (
+                        <span className={`text-[9px] px-1.5 py-0.5 rounded font-bold border ${
+                          c.evidence_check.image_verification_result === 'Image matches complaint'
+                            ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300 border-emerald-200 dark:border-emerald-800'
+                            : 'bg-rose-50 text-rose-700 dark:bg-rose-950/40 dark:text-rose-300 border-rose-200 dark:border-rose-800'
+                        }`}>
+                          {c.evidence_check.image_verification_result === 'Image matches complaint' ? '📷 Match' : '📷 Mismatch'}
+                        </span>
                       )}
                     </div>
                   )}
@@ -569,6 +641,14 @@ export default function CitizenDashboard() {
                       >
                         Verify
                       </button>
+                    </div>
+                  )}
+
+                  {/* Completed verification status banner */}
+                  {c.citizen_verified !== null && (
+                    <div className="mt-2 bg-emerald-50 dark:bg-emerald-950/20 border border-emerald-200 dark:border-emerald-800 rounded-lg px-2 py-1 text-[10px] font-bold text-emerald-700 dark:text-emerald-400 flex items-center justify-between">
+                      <span>{c.citizen_verified ? '✅ Resolution Verified by You' : '🔄 Verification Rejected — Reopened'}</span>
+                      {c.citizen_feedback_rating && <span>{'⭐'.repeat(c.citizen_feedback_rating)}</span>}
                     </div>
                   )}
 
@@ -667,12 +747,12 @@ export default function CitizenDashboard() {
               </div>
 
               {/* SLA summary */}
-              {selectedComplaint.sla_summary && selectedComplaint.status !== 'Closed' && (
+              {selectedComplaint.sla_summary && (
                 <div className="bg-slate-50 dark:bg-slate-800/50 rounded-xl p-3 border border-slate-100 dark:border-slate-700">
                   <p className="text-xs font-bold text-slate-600 dark:text-slate-300 mb-1.5 flex items-center gap-1">
                     <Clock className="h-3.5 w-3.5" /> SLA Status
                   </p>
-                  <SLABar slaSummary={selectedComplaint.sla_summary} />
+                  <SLABar slaSummary={selectedComplaint.sla_summary} status={selectedComplaint.status} />
                   {selectedComplaint.sla_summary.hours_remaining !== null && (
                     <p className="text-[10px] text-slate-500 mt-1">
                       {selectedComplaint.sla_summary.hours_remaining > 0
@@ -803,9 +883,11 @@ export default function CitizenDashboard() {
               )}
 
               {/* Feedback shown if already verified */}
-              {selectedComplaint.citizen_verified !== null && selectedComplaint.status === 'Closed' && (
+              {selectedComplaint.citizen_verified !== null && (
                 <div className="bg-emerald-50 dark:bg-emerald-950/20 border border-emerald-200 dark:border-emerald-800 rounded-lg px-3 py-2 text-xs text-emerald-700 dark:text-emerald-300 font-semibold">
-                  ✅ You approved this resolution. Rated {selectedComplaint.citizen_feedback_rating}/5 stars.
+                  {selectedComplaint.citizen_verified
+                    ? `✅ Resolution verified by you. Rated ${selectedComplaint.citizen_feedback_rating || 5}/5 stars.`
+                    : '🔄 Resolution rejected by you. Complaint has been reopened.'}
                 </div>
               )}
             </div>

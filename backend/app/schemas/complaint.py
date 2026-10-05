@@ -42,6 +42,7 @@ class AIPredictionResponse(BaseModel):
 class EvidenceCheckResponse(BaseModel):
     """Multimodal Evidence Trust Score & Hard Gate Verification summary."""
     verification_decision: str = "VERIFIED"     # VERIFIED, PARTIALLY_VERIFIED, MANUAL_REVIEW, SUSPICIOUS, REJECTED
+    image_verification_result: Optional[str] = "Image matches complaint"
     trust_score: float
     trust_level: str                            # High, Medium, Low, Suspicious
     live_gps_provided: bool
@@ -73,12 +74,18 @@ class SLASummaryResponse(BaseModel):
     is_escalated: bool
     pct_elapsed: float              # 0-100
     hours_remaining: Optional[float] = None
+    sla_duration_hours: Optional[float] = None
+    sla_duration_str: Optional[str] = None
+    time_remaining_str: Optional[str] = None
+    resolution_sla_status: Optional[str] = "On Track"
+    is_breached: Optional[bool] = False
     predictive_early_warning: Optional[bool] = False
     predictive_breach_prob: Optional[float] = None
     predictive_message: Optional[str] = None
     hours_overdue: Optional[float] = None
     escalation_level: Optional[int] = None
     escalation_stage: Optional[str] = None
+
 
 class CitizenVerifyResolutionRequest(BaseModel):
     """Citizen approves or rejects resolution."""
@@ -133,7 +140,9 @@ class ComplaintResponse(BaseModel):
     status_history: List[ComplaintStatusHistoryResponse] = []
     ai_prediction: Optional[AIPredictionResponse] = None
     evidence_check: Optional[EvidenceCheckResponse] = None
+    image_verification_result: Optional[str] = None
     sla_summary: Optional[SLASummaryResponse] = None
+
 
     # Phase 10 Duplicate Tracking & Citizen UX fields
     is_duplicate: bool = False

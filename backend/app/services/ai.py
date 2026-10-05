@@ -12,6 +12,7 @@ import logging
 from typing import Tuple, Dict, Any, Optional
 from langdetect import detect, detect_langs
 from deep_translator import GoogleTranslator
+from backend.app.core.config import settings
 
 logger = logging.getLogger(__name__)
 try:
@@ -619,52 +620,82 @@ KANNADA_CIVIC_DICTIONARY = {
     "ದೀಪ ಉರಿಯುತ್ತಿಲ್ಲ": "streetlight not working dark road",
 }
 
-# Common Romanized Kannada / Kanglish civic keyword mapping
+# Common Romanized Kannada / Kanglish civic keyword mapping (Strictly transliterated terms only)
 KANGLISH_CIVIC_MAP = {
+    # Multi-word phrases (matched first)
+    "alli ondu": "there is a",
+    "ondu dodda": "a large",
+    "ondu doddha": "a severe",
+    "ondu severe": "a severe",
+    "dodda pothole": "large pothole",
+    "doddha pothole": "severe pothole",
+    "gundi ide": "pothole exists on road",
+    "gundi biddide": "pothole has formed",
+    "gundi aagide": "pothole has formed",
+    "pothole aagide": "pothole has formed",
+    "pothole na": "the pothole",
+    "fill maadbeku": "must be filled",
+    "fill madbeku": "must be filled",
+    "road repair maadi": "repair the road and",
+    "danger aagide": "is very dangerous",
+    "tumba danger": "very dangerous",
+    "thumba danger": "very dangerous",
+    "accident aagade irbeku": "to prevent accidents",
+    "road damage innu hecchagade irbeku andre": "to prevent further road damage",
+    "innu hecchagade irbeku andre": "to avoid increasing damage",
+    "hecchagade irbeku": "prevent increasing",
+    "immediate-aagi": "immediately",
+    "immediate aagi": "immediately",
+    "kasa thumba ide": "a lot of garbage is dumped",
+    "kasa biddide": "garbage is dumped",
+    "smell barthide": "foul smell is emitting",
+    "current illa": "power outage",
+    "current cut": "power cut",
+    "neeru barthilla": "drinking water is not being supplied",
+    "neeru supply illa": "no drinking water supply",
+    "light uriyalla": "streetlight is not working",
+    "mara biddide": "tree has fallen across the road",
+    "wire biddide": "electric wire has fallen down",
+
+    # Single-word terms
     "gundi": "pothole",
     "gundigalu": "potholes",
-    "gundi ide": "pothole is on road",
-    "gundi biddide": "pothole formed crater",
     "halla": "pothole",
-    "doddha": "severe",
-    "dodda": "severe",
-    "ide": "is",
-    "haalagide": "damaged hazard",
-    "haalaagide": "damaged hazard",
-    "halagide": "damaged hazard",
+    "doddha": "severe large",
+    "dodda": "large",
+    "ondu": "a",
+    "alli": "at",
+    "illi": "here",
+    "aagide": "has occurred",
+    "agide": "has occurred",
+    "haalagide": "damaged",
+    "haalaagide": "damaged",
+    "halagide": "damaged",
     "rasthe": "road",
     "raste": "road",
     "rastheyalli": "on the road",
     "rasteyalli": "on the road",
     "rastele": "on the road",
-    "footpath": "footpath",
     "kasa": "garbage",
-    "kachra": "garbage",
     "kachada": "garbage",
-    "waste dump": "garbage dump",
-    "smell barthide": "foul smell garbage",
-    "current illa": "power outage",
-    "current cut": "power cut",
-    "vidyuth": "electricity",
-    "wire biddide": "electric wire fallen",
     "kamba": "electric pole",
-    "transformer spark": "transformer sparking",
-    "bescom": "bescom",
-    "neeru barthilla": "no water supply",
-    "neeru supply illa": "no water supply",
-    "pipeline burst": "pipeline burst",
-    "pipe leak": "water pipe leak",
-    "charandi": "sewage overflow",
+    "vidyuth": "electricity",
+    "charandi": "sewage drain",
     "gatara": "gutter drain",
-    "sewage": "sewage overflow",
-    "manhole": "manhole chamber",
-    "bmtc": "bmtc bus",
-    "bmtc bus": "bmtc bus",
-    "bus banthilla": "bus delayed",
-    "bus delay": "bus delay",
-    "bus stop illa": "bus stop issue",
-    "light uriyalla": "streetlight not working",
-    "mara biddide": "tree fallen",
+    "tumba": "very",
+    "thumba": "very",
+    "mattu": "and",
+    "innu": "further",
+    "maadi": "do",
+    "maadbeku": "must be done",
+    "madbeku": "must be fixed",
+    "beku": "is required",
+    "irbeku": "must be prevented",
+    "swalpa": "little",
+    "koodale": "immediately",
+    "kudale": "immediately",
+    "neeru": "water",
+    "niru": "water",
 }
 
 # Common Romanized Hindi / Hinglish civic keyword mapping
@@ -679,25 +710,11 @@ HINGLISH_CIVIC_MAP = {
     "bohut": "very",
     "khatarnak": "hazard",
     "sadak": "road",
-    "par": "on",
-    "pe": "on",
-    "mein": "in",
-    "me": "in",
-    "hai": "is",
-    "h": "is",
-    "nahi": "not",
-    "nahin": "not",
-    "nhi": "not",
-    "kya": "what",
     "kachra": "garbage",
     "ganda": "dirty contaminated",
     "pani": "water",
     "paani": "water",
     "bijli": "electricity",
-    "gaya": "outage",
-    "gaye": "outage",
-    "aaraha": "coming",
-    "aaya": "arrived",
     "samasya": "problem",
     "galli": "street",
     "rasta": "road",
@@ -706,17 +723,16 @@ HINGLISH_CIVIC_MAP = {
     "khulla": "open dangerous",
 }
 
-INDIC_MARKER_WORDS = set(list(KANGLISH_CIVIC_MAP.keys()) + list(HINGLISH_CIVIC_MAP.keys()) + [
-    "hai", "h", "nahi", "nahin", "nhi", "kya", "bada", "baddha", "badi", "gaddha", "gaddhe",
-    "bahut", "bohot", "bohut", "khatarnak", "samasya", "sadak", "par", "mein", "me",
-    "ka", "ki", "ke", "ko", "se", "aur", "pe", "paani", "pani", "ganda", "kachra",
-    "bijli", "gaya", "gaye", "aaraha", "aaya", "karoo", "karo", "raha", "rahe", "rahi",
-    "gundi", "ide", "iddhe", "biddide", "biddidhe", "biddira", "swalpa", "rasteyalli",
-    "rastele", "raste", "tumba", "thumba", "nodidara", "agide", "aagide", "haalaagide",
-    "halagide", "ilva", "illva", "illa", "iradilla", "niru", "neeru", "bartha", "barilla",
-    "koodale", "kudale", "beku", "madbeku", "nodi", "kettogide", "bandh", "karet",
-    "kurentu", "myaanhollu", "gataar", "naali", "rasta", "khulla"
-])
+# Unambiguous Indic grammatical and civic markers (no single letters, no standard English words)
+INDIC_MARKER_WORDS = {
+    "aagide", "agide", "maadbeku", "madbeku", "beku", "irbeku", "tumba", "thumba",
+    "ondu", "alli", "illi", "yelli", "nodi", "nodidara", "gundi", "gundigalu",
+    "biddide", "biddidhe", "swalpa", "rasteyalli", "rastheyalli", "haalaagide",
+    "halagide", "kettogide", "neeru", "niru", "barthilla", "bartha", "barilla",
+    "koodale", "kudale", "kasa", "karentu", "doddha", "dodda", "mattu", "innu",
+    "hecchagade", "maadi", "charandi", "gatara", "sadak", "kachra", "bijli",
+    "khatarnak", "gaddha", "gaddhe", "samasya", "paani"
+}
 
 # In-memory translation cache to avoid repeated network calls
 _TRANSLATION_CACHE: Dict[str, Tuple[str, str, float]] = {}
@@ -730,8 +746,7 @@ def contains_kannada_script(text: str) -> bool:
 def translate_text(text: str) -> Tuple[str, str, float]:
     """
     Detects language (Kannada, English, Kanglish, Hinglish) and translates to English.
-    Removes the language gate that skips translation when detected language is 'en'.
-    Translation runs unless text is high-confidence English with no Indic/Kanglish/Hinglish marker words.
+    Genuine English text is preserved without corrupting or misidentifying as Kanglish.
     Returns (translated_text, detected_lang, time_taken).
     """
     start_time = time.time()
@@ -744,48 +759,73 @@ def translate_text(text: str) -> Tuple[str, str, float]:
         cached_trans, cached_lang, _ = _TRANSLATION_CACHE[cache_key]
         return cached_trans, cached_lang, round(time.time() - start_time, 4)
 
-
     # 1. Check for Kannada Unicode script
     has_kannada_script = contains_kannada_script(text)
     
-    # 2. Check for Indic/Kanglish/Hinglish marker words
-    words_lower = set(re.findall(r'\b\w+\b', text.lower()))
-    has_indic_markers = bool(words_lower.intersection(INDIC_MARKER_WORDS)) or \
-                         any(k in text.lower() for k in KANGLISH_CIVIC_MAP.keys()) or \
-                         any(k in text.lower() for k in HINGLISH_CIVIC_MAP.keys())
+    # 2. Check for Indic/Kanglish/Hinglish marker words strictly using whole word matching
+    words_lower = set(re.findall(r'\b[a-zA-Z]+\b', text.lower()))
+    indic_word_matches = words_lower.intersection(INDIC_MARKER_WORDS)
+    has_indic_markers = len(indic_word_matches) >= 2 or (
+        len(indic_word_matches) >= 1 and any(w in indic_word_matches for w in [
+            "aagide", "agide", "maadbeku", "madbeku", "gundi", "rasteyalli", "neeru", "barthilla", "kasa", "khatarnak"
+        ])
+    )
 
-    # 3. Language detection for display metadata
+    # 3. Language detection
     detected_lang = "en"
-    high_confidence_en = False
-
     if has_kannada_script:
         detected_lang = "kn"
     elif has_indic_markers:
-        detected_lang = "kn-en"  # Indic transliterated (Kanglish / Hinglish)
+        detected_lang = "kn-en"
     else:
         try:
             langs = detect_langs(text)
             if langs:
                 top_lang = langs[0]
-                detected_lang = top_lang.lang
-                if top_lang.lang == "en" and top_lang.prob > 0.95:
-                    high_confidence_en = True
+                if top_lang.lang == "en" and top_lang.prob > 0.70:
+                    detected_lang = "en"
+                elif top_lang.lang == "kn":
+                    detected_lang = "kn"
+                else:
+                    detected_lang = "en"
         except Exception:
             detected_lang = "en"
 
     # 4. Translation Guard:
-    # Skip translation ONLY IF langdetect reports high-confidence 'en' AND there are NO Indic/Kanglish/Hinglish markers AND no Kannada script.
-    if high_confidence_en and not has_indic_markers and not has_kannada_script:
+    # If text is detected as genuine English and has no Kannada script or Indic grammar, return as-is
+    if detected_lang == "en" and not has_indic_markers and not has_kannada_script:
+        _TRANSLATION_CACHE[cache_key] = (text, "en", round(time.time() - start_time, 4))
         return text, "en", round(time.time() - start_time, 4)
 
     # 5. Translation Execution
     translated_text = text
     translated_online = False
 
+    # Tier 0: Google Gemini Multimodal / Text API if configured
+    gemini_key = getattr(settings, "GEMINI_API_KEY", None) or os.environ.get("GEMINI_API_KEY")
+    if gemini_key and len(gemini_key) > 25 and "your_" not in gemini_key:
+        try:
+            import google.generativeai as genai
+            genai.configure(api_key=gemini_key)
+            gmodel = genai.GenerativeModel("gemini-1.5-flash")
+            prompt = (
+                f"You are an expert Kannada and Kanglish civic complaint translator. "
+                f"Translate the following citizen civic grievance into clear, formal, standard English. "
+                f"Output ONLY the translated English text with no quotes, markdown, preamble or explanations:\n{text}"
+            )
+            gresp = gmodel.generate_content(prompt)
+            if gresp and gresp.text and len(gresp.text.strip()) > 3:
+                candidate = gresp.text.strip().strip('"').strip("'")
+                if candidate.lower() != text.lower():
+                    translated_text = candidate
+                    translated_online = True
+        except Exception as ge:
+            logger.info("Gemini translation fallback to Google/Dictionary: %s", ge)
+
     # Tier 1: Online GoogleTranslator API (bypassed if temporarily rate-limited)
     global _GOOGLE_COOLDOWN_UNTIL
     now = time.time()
-    if now > _GOOGLE_COOLDOWN_UNTIL:
+    if not translated_online and now > _GOOGLE_COOLDOWN_UNTIL:
         try:
             translator = GoogleTranslator(source='auto', target='en')
             candidate = translator.translate(text)
@@ -795,29 +835,22 @@ def translate_text(text: str) -> Tuple[str, str, float]:
         except Exception as e:
             err_msg = str(e)
             if "too many requests" in err_msg.lower() or "server error" in err_msg.lower() or "429" in err_msg:
-                # Set 60s cooldown so rapid keystrokes/requests don't stall or log spam
                 _GOOGLE_COOLDOWN_UNTIL = now + 60.0
                 logger.warning("GoogleTranslator rate limit encountered. Cooldown for 60s active; using dictionary fallback.")
             else:
                 logger.warning("Online GoogleTranslator failed (%s). Proceeding with dictionary/normalizer fallback.", e)
             translated_online = False
-    else:
-        # In cooldown period: immediately proceed to Tier 2 local dictionary normalizer
-        translated_online = False
-
 
     # Tier 2: Linguistic civic dictionary normalizer (always enriches or falls back)
     # Pass 1: Multi-word phrase matching on full text BEFORE single-word tokenization
     working_text = text
     
-    # Collect all multi-word keys (keys containing a space) across all three dictionaries
     multi_word_pairs = []
     for d in (KANNADA_CIVIC_DICTIONARY, KANGLISH_CIVIC_MAP, HINGLISH_CIVIC_MAP):
         for k, v in d.items():
             if " " in k.strip():
                 multi_word_pairs.append((k.strip(), v))
     
-    # Sort by phrase key length descending (longest phrase first)
     multi_word_pairs.sort(key=lambda x: len(x[0]), reverse=True)
 
     for phrase_key, eng_val in multi_word_pairs:
@@ -825,7 +858,7 @@ def translate_text(text: str) -> Tuple[str, str, float]:
             if phrase_key in working_text:
                 working_text = working_text.replace(phrase_key, f" {eng_val} ")
         else:
-            pattern = re.compile(re.escape(phrase_key), re.IGNORECASE)
+            pattern = re.compile(r'\b' + re.escape(phrase_key) + r'\b', re.IGNORECASE)
             if pattern.search(working_text):
                 working_text = pattern.sub(f" {eng_val} ", working_text)
 
@@ -841,7 +874,6 @@ def translate_text(text: str) -> Tuple[str, str, float]:
         elif clean_lower in HINGLISH_CIVIC_MAP:
             enriched_tokens.append(HINGLISH_CIVIC_MAP[clean_lower])
         else:
-            # Substring stem check for Kannada / Indic inflections (single-word keys only)
             matched = False
             for k_key, eng_val in KANNADA_CIVIC_DICTIONARY.items():
                 if " " not in k_key and k_key in clean_word:
@@ -849,25 +881,20 @@ def translate_text(text: str) -> Tuple[str, str, float]:
                     matched = True
                     break
             if not matched:
-                # Strip raw Kannada script characters if unmapped
                 clean_ascii = "".join([c for c in clean_word if not ('\u0C80' <= c <= '\u0CFF')])
                 if clean_ascii.strip():
                     enriched_tokens.append(clean_ascii.strip())
 
     dictionary_translated = " ".join([t for t in enriched_tokens if t.strip()])
+    # Clean redundant spaces
+    dictionary_translated = re.sub(r'\s+', ' ', dictionary_translated).strip()
 
-    # If online translation failed or left untranslated Kannada script, use Tier 2 dictionary translation
     if not translated_online or contains_kannada_script(translated_text):
         translated_text = dictionary_translated if dictionary_translated.strip() else text
 
-    # Ensure no residual Kannada script remains in final translated_text
     if contains_kannada_script(translated_text):
         translated_text = "".join([c for c in translated_text if not ('\u0C80' <= c <= '\u0CFF')])
         translated_text = " ".join(translated_text.split())
-
-    if not translated_text or not translated_text.strip():
-        logger.warning("Translation yielded empty result for input '%s'. Falling back to raw text.", text)
-        translated_text = text
 
     time_taken = round(time.time() - start_time, 4)
     if len(_TRANSLATION_CACHE) >= _MAX_TRANSLATION_CACHE:
@@ -880,31 +907,40 @@ def classify_complaint(text: str) -> Tuple[str, float]:
     """
     Classifies complaint text into predefined categories using SentenceTransformer semantic similarity
     combined with high-precision domain keyword intent scoring strictly across the 4 Karnataka Civic Authorities:
-    - BBMP: Roads, Footpaths, Stormwater Drains, Streetlights, Trees, Parks, Lakes, Civic Services
+    - BBMP: Roads, Potholes, Footpaths, Stormwater Drains, Streetlights, Trees, Parks, Lakes, Civic Services
+    - BSWML: Door-to-Door Collection, Garbage Accumulation, Illegal Dumping, Burning, C&D Waste
     - BESCOM: Power Supply, Voltage, Lines & Poles, Transformers, Meters & Billing
     - BWSSB: Water Supply, Pipeline Leakage, Quality, Sewerage & Drainage, Sewage Overflow, Manholes
-    - BSWML: Door-to-Door Collection, Garbage Accumulation, Illegal Dumping, Burning, C&D Waste
     """
     text_lower = text.lower()
 
-    # 1. Streetlight signal (STRICT RULE: Municipal street lighting routes to BBMP, NOT BESCOM)
+    # 1. BBMP Road & Pothole signals (HIGH PRIORITY: road/pothole issues strictly route to BBMP)
+    is_pothole = any(w in text_lower for w in [
+        "pothole", "potholes", "gundi", "crater", "craters", "road pit", "road hole",
+        "road cave-in", "broken asphalt", "road cracks", "road damage", "road repair",
+        "damaged road", "fill pothole", "pothole na", "bad road", "road broken",
+        "pothole aagide", "asphalt damaged", "tar road", "uneven road"
+    ]) or ("road" in text_lower and any(w in text_lower for w in [
+        "damage", "repair", "broken", "cave", "hole", "crater", "asphalt", "fill", "mg road", "severe", "danger", "hazard", "two-wheeler", "vehicles"
+    ]))
+
+    # 2. Streetlight signal (STRICT RULE: Municipal street lighting routes to BBMP, NOT BESCOM)
     is_streetlight = any(w in text_lower for w in [
         "streetlight", "street light", "dark road", "street lamp", "light uriyalla",
         "light not working", "streetlamp", "flickering light", "broken lamp",
         "bidi dipa", "beedi deepa", "no street light", "bulb fused", "lamp post"
     ])
 
-    # 2. BBMP Civic signals
-    is_pothole = any(w in text_lower for w in ["pothole", "gundi", "crater", "road pit", "road hole", "road cave-in", "broken asphalt", "road cracks"])
-    is_footpath = any(w in text_lower for w in ["footpath", "sidewalk", "broken footpath", "paving", "curb", "pedestrian path", "foot path"])
-    is_drain = any(w in text_lower for w in ["stormwater", "waterlogging", "rain flooding", "rainwater", "rajakaluve", "storm drain", "flood point", "water logging"])
-    is_tree = any(w in text_lower for w in ["tree fall", "tree fallen", "branch broken", "storm damage tree", "dangerous tree", "dead tree", "overgrown branch"])
-    is_lake = any(w in text_lower for w in ["lake", "kere", "lake waste", "lake pollution", "lake sewage"])
-    is_park = any(re.search(r'\b' + re.escape(w) + r'\b', text_lower) for w in ["park", "parks", "garden", "playground", "park bench"])
-    is_road = any(w in text_lower for w in ["road damage", "asphalt", "broken road", "rasthe", "road cut", "road divider", "median"])
-    is_sanitation = any(w in text_lower for w in ["public toilet", "urinal", "stray dog", "dead animal carcass", "animal removal", "encroachment"])
+    # 3. BSWML Solid Waste signals (Garbage & waste strictly routes to BSWML)
+    is_garbage = any(w in text_lower for w in [
+        "garbage", "trash", "waste", "kachra", "kasa", "dustbin", "waste collection",
+        "illegal dumping", "dumping", "sweeping", "foul smell", "stinking waste",
+        "garbage burning", "plastic burning", "waste burning", "segregation",
+        "black spot", "blackspot", "auto tipper", "c&d waste", "demolition waste", "bswml",
+        "solid waste", "litter"
+    ])
 
-    # 3. BESCOM Electrical signals
+    # 4. BESCOM Electrical signals
     is_power = any(w in text_lower for w in [
         "power cut", "power outage", "blackout", "no current", "current illa",
         "load shedding", "electricity failure", "power failure", "intermittent power"
@@ -916,13 +952,13 @@ def classify_complaint(text: str) -> Tuple[str, float]:
     ])
     is_electric_billing = any(w in text_lower for w in ["electric bill", "electricity bill", "meter reading", "faulty meter", "meter burnt", "tariff"])
 
-    # 4. BWSSB Water & Sewerage signals
+    # 5. BWSSB Water & Sewerage signals (Drinking water supply & underground sewage)
     is_water_quality = any(w in text_lower for w in [
         "dirty water", "contaminated", "contamination", "muddy", "discoloured", "discolored",
         "foul water", "stinking water", "bad smell water", "bad taste water", "smelly water"
     ])
     is_water_leak = any(w in text_lower for w in [
-        "pipeline burst", "pipe leak", "water leak", "water pipe burst", "pipeline leakage", "running water on road"
+        "pipeline burst", "pipe leak", "water pipe burst", "pipeline leakage", "water main leak"
     ])
     is_water_supply = any(w in text_lower for w in [
         "no water supply", "water not coming", "dry tap", "drinking water",
@@ -934,21 +970,41 @@ def classify_complaint(text: str) -> Tuple[str, float]:
     ])
     is_water_billing = any(w in text_lower for w in ["water bill", "water meter", "rr number", "bwssb tanker"])
 
-    # 5. BSWML Solid Waste signals
-    is_garbage = any(w in text_lower for w in [
-        "garbage", "trash", "waste", "kachra", "kasa", "dustbin", "waste collection",
-        "illegal dumping", "dumping", "sweeping", "foul smell", "stinking waste",
-        "garbage burning", "plastic burning", "waste burning", "segregation",
-        "black spot", "blackspot", "auto tipper", "c&d", "construction debris",
-        "demolition waste", "bswml"
-    ])
+    # 6. Other BBMP Civic signals
+    is_footpath = any(w in text_lower for w in ["footpath", "sidewalk", "broken footpath", "paving", "curb", "pedestrian path", "foot path"])
+    is_drain = any(w in text_lower for w in ["stormwater", "waterlogging", "rain flooding", "rainwater", "rajakaluve", "storm drain", "flood point", "water logging"])
+    is_tree = any(w in text_lower for w in ["tree fall", "tree fallen", "branch broken", "storm damage tree", "dangerous tree", "dead tree", "overgrown branch"])
+    is_lake = any(w in text_lower for w in ["lake", "kere", "lake waste", "lake pollution", "lake sewage"])
+    is_park = any(re.search(r'\b' + re.escape(w) + r'\b', text_lower) for w in ["park", "parks", "garden", "playground", "park bench"])
+    is_road = any(w in text_lower for w in ["road damage", "asphalt", "broken road", "rasthe", "road cut", "road divider", "median"])
+    is_sanitation = any(w in text_lower for w in ["public toilet", "urinal", "stray dog", "dead animal carcass", "animal removal", "encroachment"])
 
     # ── Priority Rule-Based Direct Category Assignment ─────────────────────
-    # Streetlight explicitly routes to BBMP
+    # PRIORITY 1: Road & Pothole complaints STRICTLY route to BBMP
+    if is_pothole:
+        return "Potholes & Damaged Roads", 0.98
+
+    # PRIORITY 2: Solid Waste Management STRICTLY routes to BSWML
+    if is_garbage:
+        if any(w in text_lower for w in ["burn", "smoke", "fire", "plastic"]):
+            return "Garbage Burning & Air Pollution", 0.96
+        if any(w in text_lower for w in ["not collected", "missed", "van not", "auto tipper"]):
+            return "Garbage Not Collected", 0.96
+        if any(w in text_lower for w in ["c&d", "construction", "demolition", "debris"]):
+            return "Bulk & Construction Waste Dumping", 0.95
+        if any(w in text_lower for w in ["dump", "roadside", "empty plot", "vacant"]):
+            return "Illegal Roadside Waste Dumping", 0.94
+        if any(w in text_lower for w in ["smell", "stink", "rotten"]):
+            return "Foul Smell & Waste Health Hazard", 0.93
+        if any(w in text_lower for w in ["segregat", "wet", "dry"]):
+            return "Wet & Dry Waste Segregation Issues", 0.92
+        return "Overflowing Garbage Bins & Blackspots", 0.96
+
+    # PRIORITY 3: Streetlight explicitly routes to BBMP
     if is_streetlight:
         return "Damaged Streetlights", 0.96
 
-    # Electricity & Power (BESCOM) - high hazard priority
+    # PRIORITY 4: Electricity & Power (BESCOM) - high hazard priority
     if is_electric_hazard:
         if any(w in text_lower for w in ["transformer", "blast", "explosion"]):
             return "Transformer Failure & Sparks", 0.96
@@ -966,10 +1022,10 @@ def classify_complaint(text: str) -> Tuple[str, float]:
     if is_electric_billing:
         return "Electricity Meter & Billing Issues", 0.94
 
-    # Water & Sewerage (BWSSB)
+    # PRIORITY 5: Water & Sewerage (BWSSB)
     if is_water_quality:
         return "Contaminated Drinking Water", 0.96
-    if is_water_leak:
+    if is_water_leak and any(w in text_lower for w in ["pipeline", "pipe", "burst", "leak"]):
         return "Water Pipeline Burst & Leakage", 0.96
     if is_water_supply:
         if "low" in text_lower or "pressure" in text_lower:
@@ -984,25 +1040,7 @@ def classify_complaint(text: str) -> Tuple[str, float]:
     if is_water_billing:
         return "Water Meter & Tanker Issues", 0.93
 
-    # Solid Waste Management (BSWML)
-    if is_garbage:
-        if any(w in text_lower for w in ["burn", "smoke", "fire", "plastic"]):
-            return "Garbage Burning & Air Pollution", 0.96
-        if any(w in text_lower for w in ["not collected", "missed", "van not", "auto tipper"]):
-            return "Garbage Not Collected", 0.96
-        if any(w in text_lower for w in ["c&d", "construction", "demolition", "debris"]):
-            return "Bulk & Construction Waste Dumping", 0.95
-        if any(w in text_lower for w in ["dump", "roadside", "empty plot", "vacant"]):
-            return "Illegal Roadside Waste Dumping", 0.94
-        if any(w in text_lower for w in ["smell", "stink", "rotten"]):
-            return "Foul Smell & Waste Health Hazard", 0.93
-        if any(w in text_lower for w in ["segregat", "wet", "dry"]):
-            return "Wet & Dry Waste Segregation Issues", 0.92
-        return "Overflowing Garbage Bins & Blackspots", 0.94
-
-    # Potholes, Roads & Civic Services (BBMP)
-    if is_pothole:
-        return "Potholes & Damaged Roads", 0.96
+    # PRIORITY 6: Other BBMP Civic Services
     if is_footpath:
         return "Broken Footpaths & Walkways", 0.95
     if is_drain:
@@ -1014,7 +1052,7 @@ def classify_complaint(text: str) -> Tuple[str, float]:
     if is_park:
         return "Park Maintenance & Public Gardens", 0.93
     if is_road:
-        return "Potholes & Damaged Roads", 0.91
+        return "Potholes & Damaged Roads", 0.94
     if is_sanitation:
         if any(w in text_lower for w in ["toilet", "urinal"]):
             return "Public Toilet & Civic Amenities", 0.92

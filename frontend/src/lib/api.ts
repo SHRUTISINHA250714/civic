@@ -1,33 +1,87 @@
 const API_BASE = "http://127.0.0.1:8000/api/v1";
 
-// Token storage helpers
+// Token storage helpers with localStorage & sessionStorage redundancy
 export const tokenStorage = {
   setToken: (token: string) => {
     if (typeof window !== "undefined") {
-      localStorage.setItem("civic_token", token);
+      try {
+        localStorage.setItem("civic_token", token);
+        sessionStorage.setItem("civic_token", token);
+      } catch (e) {
+        console.warn("Storage write error", e);
+      }
     }
   },
   getToken: () => {
     if (typeof window !== "undefined") {
-      return localStorage.getItem("civic_token");
+      try {
+        return localStorage.getItem("civic_token") || sessionStorage.getItem("civic_token");
+      } catch (e) {
+        return null;
+      }
     }
     return null;
   },
   clearToken: () => {
     if (typeof window !== "undefined") {
-      localStorage.removeItem("civic_token");
-      localStorage.removeItem("civic_user");
+      try {
+        localStorage.removeItem("civic_token");
+        localStorage.removeItem("civic_user");
+        sessionStorage.removeItem("civic_token");
+        sessionStorage.removeItem("civic_user");
+      } catch (e) {}
     }
   },
   setUserInfo: (user: any) => {
-    if (typeof window !== "undefined") {
-      localStorage.setItem("civic_user", JSON.stringify(user));
+    if (typeof window !== "undefined" && user) {
+      try {
+        const str = JSON.stringify(user);
+        localStorage.setItem("civic_user", str);
+        sessionStorage.setItem("civic_user", str);
+      } catch (e) {
+        console.warn("User info storage error", e);
+      }
     }
   },
   getUserInfo: () => {
     if (typeof window !== "undefined") {
-      const user = localStorage.getItem("civic_user");
-      return user ? JSON.parse(user) : null;
+      try {
+        const user = localStorage.getItem("civic_user") || sessionStorage.getItem("civic_user");
+        return user ? JSON.parse(user) : null;
+      } catch (e) {
+        return null;
+      }
+    }
+    return null;
+  },
+  ensureSession: async (expectedRole?: string) => {
+    const token = tokenStorage.getToken();
+    if (!token) return null;
+    
+    let user = tokenStorage.getUserInfo();
+    if (user && (!expectedRole || user.role?.toLowerCase() === expectedRole.toLowerCase())) {
+      return user;
+    }
+    
+    // If user info is missing from storage or role needs confirmation, re-validate with backend
+    try {
+      const me = await api.getMe();
+      if (me) {
+        const userInfo = {
+          id: me.id,
+          name: me.name,
+          email: me.email,
+          role: me.role?.name || me.role || (typeof me.role_id === 'number' && me.role_id === 1 ? 'Citizen' : 'Officer')
+        };
+        tokenStorage.setUserInfo(userInfo);
+        if (!expectedRole || userInfo.role?.toLowerCase() === expectedRole.toLowerCase()) {
+          return userInfo;
+        }
+      }
+    } catch (err) {
+      console.warn("Session re-validation failed:", err);
+      tokenStorage.clearToken();
+      return null;
     }
     return null;
   }

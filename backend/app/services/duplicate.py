@@ -53,15 +53,26 @@ def check_duplicate_complaint(
     description: str,
     category_id: int,
     distance_threshold_m: float = 100.0,
-    similarity_threshold: float = 0.85
+    similarity_threshold: float = 0.85,
+    image_path: Optional[str] = None,
+    image_semantic_status: Optional[str] = None,
+    perceptual_hash: Optional[str] = None,
 ) -> Tuple[bool, Optional[int], float]:
     """
     Checks if a complaint is a duplicate of an existing active complaint:
       1. Same-category constraint.
       2. Haversine spatial proximity (within distance_threshold_m, default 100m).
-      3. Cross-lingual semantic matching handling wording variations across Kannada, Kanglish, Hinglish, and English.
+      3. Cross-lingual semantic matching handling wording variations.
+      4. Multimodal image verification: An image that mismatches the complaint category
+         (e.g., a pothole complaint submitted with a garbage image) will NOT be treated as a duplicate.
     Returns (is_duplicate, duplicate_of_complaint_id, similarity_score).
     """
+    # Safeguard 0: Multimodal image-context gate.
+    # If the user's uploaded image fails verification (e.g. garbage image for pothole complaint),
+    # it must NOT automatically be linked as a duplicate solely because the text matches.
+    if image_semantic_status == "MISMATCH":
+        logger.info("Duplicate check rejected: Uploaded image semantic mismatch for category_id %s.", category_id)
+        return False, None, 0.0
     # Safeguard 1: Translate incoming text to standard English first
     translated_input = None
     if description and description.strip():

@@ -6,7 +6,7 @@ import shutil
 from typing import List, Optional
 from PIL import Image
 from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, Form
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload, selectinload
 from sqlalchemy import func
 from backend.app.core.database import get_db
 from backend.app.core.config import settings
@@ -153,16 +153,19 @@ def is_untranslated_script(text: Optional[str]) -> bool:
 # Helper: Serialise a Complaint ORM object to API response dict
 # ─────────────────────────────────────────────────────────────────────────────
 def serialize_complaint(c: Complaint, db: Session, user_role: Optional[str] = None) -> dict:
-    citizen_name    = c.citizen.name
-    category_name   = c.category.name
-    department_name = c.category.department.name
-    department_id   = c.category.department.id
+    citizen_name    = c.citizen.name if c.citizen else "Citizen"
+    category_name   = c.category.name if c.category else "Others"
+    department_name = c.category.department.name if (c.category and c.category.department) else "BBMP"
+    department_id   = c.category.department.id if (c.category and c.category.department) else 1
 
     assigned_officer_name = None
     if c.assigned_officer:
-        officer_user = db.query(User).filter(User.id == c.assigned_officer.user_id).first()
-        if officer_user:
-            assigned_officer_name = officer_user.name
+        if hasattr(c.assigned_officer, "user") and c.assigned_officer.user:
+            assigned_officer_name = c.assigned_officer.user.name
+        else:
+            officer_user = db.query(User).filter(User.id == c.assigned_officer.user_id).first()
+            if officer_user:
+                assigned_officer_name = officer_user.name
 
     images_res = [
         {
@@ -176,7 +179,7 @@ def serialize_complaint(c: Complaint, db: Session, user_role: Optional[str] = No
             "perceptual_hash": getattr(img, "perceptual_hash", None),
             "created_at": img.created_at,
         }
-        for img in c.images
+        for img in (c.images or [])
     ]
 
     history_res = [
@@ -184,17 +187,18 @@ def serialize_complaint(c: Complaint, db: Session, user_role: Optional[str] = No
             "id": h.id,
             "status": h.status,
             "remarks": h.remarks,
-            "changed_by_name": h.changed_by_user.name,
+            "changed_by_name": h.changed_by_user.name if h.changed_by_user else "System",
             "created_at": h.created_at,
         }
-        for h in c.status_history
+        for h in (c.status_history or [])
     ]
 
     ai_pred_res = None
     if c.ai_prediction:
+        pred_cat_name = c.ai_prediction.predicted_category.name if (c.ai_prediction.predicted_category) else "Others"
         ai_pred_res = {
             "id":                       c.ai_prediction.id,
-            "predicted_category_name":  c.ai_prediction.predicted_category.name,
+            "predicted_category_name":  pred_cat_name,
             "category_confidence":      c.ai_prediction.category_confidence,
             "predicted_priority":       c.ai_prediction.predicted_priority,
             "priority_confidence":      c.ai_prediction.priority_confidence,
@@ -204,10 +208,15 @@ def serialize_complaint(c: Complaint, db: Session, user_role: Optional[str] = No
         }
 
     evidence_res = None
+    image_verification_result = "Image matches complaint"
     if c.evidence_check:
         ev = c.evidence_check
+        is_mismatch = (getattr(ev, "semantic_match_status", "MATCH") == "MISMATCH" or 
+                       getattr(ev, "verification_decision", "VERIFIED") == "REJECTED")
+        image_verification_result = "Image does not match complaint" if is_mismatch else "Image matches complaint"
         evidence_res = {
             "verification_decision":    getattr(ev, "verification_decision", "VERIFIED") or "VERIFIED",
+            "image_verification_result": image_verification_result,
             "trust_score":              ev.trust_score,
             "trust_level":              ev.trust_level,
             "live_gps_provided":        ev.live_gps_provided,
@@ -246,7 +255,7 @@ def serialize_complaint(c: Complaint, db: Session, user_role: Optional[str] = No
         is_duplicate = True
         parent_complaint_id = c.duplicate_of_complaint_id
         child_report_id = c.id
-        parent = db.query(Complaint).filter(Complaint.id == c.duplicate_of_complaint_id).first()
+        parent = getattr(c, "original_complaint", None) or db.query(Complaint).filter(Complaint.id == c.duplicate_of_complaint_id).first()
         if parent:
             parent_status = parent.status
             impact_count = parent.impact_count or 1
@@ -259,14 +268,16 @@ def serialize_complaint(c: Complaint, db: Session, user_role: Optional[str] = No
                     "changed_by_name": h.changed_by_user.name if h.changed_by_user else "System",
                     "created_at": h.created_at,
                 }
-                for h in parent.status_history
+                for h in (parent.status_history or [])
             ]
         else:
             parent_status = c.status
     else:
-        child_count = db.query(func.count(Complaint.id)).filter(
-            Complaint.duplicate_of_complaint_id == c.id
-        ).scalar() or 0
+        child_count = len(c.duplicates) if (hasattr(c, "duplicates") and c.duplicates is not None) else (
+            db.query(func.count(Complaint.id)).filter(
+                Complaint.duplicate_of_complaint_id == c.id
+            ).scalar() or 0
+        )
         impact_count = max(getattr(c, "impact_count", 1) or 1, child_count + 1)
 
     desc = c.description
@@ -312,6 +323,7 @@ def serialize_complaint(c: Complaint, db: Session, user_role: Optional[str] = No
         "status_history":           history_res,
         "ai_prediction":            ai_pred_res,
         "evidence_check":           evidence_res,
+        "image_verification_result": image_verification_result,
         "sla_summary":              sla_res,
         "is_duplicate":             is_duplicate,
         "parent_complaint_id":      parent_complaint_id,
@@ -470,13 +482,41 @@ def raise_complaint(
         ai_confidence=cat_conf
     )
 
-    # ── 4. Duplicate Detection ────────────────────────────────────────────────
+    # ── 3.5 Handle Image Upload & Multimodal Evidence Verification ────────────
+    image_path = None
+    web_url = None
+    if file:
+        file_ext = os.path.splitext(file.filename or "image.jpg")[1] or ".jpg"
+        unique_filename = f"{uuid.uuid4()}{file_ext}"
+        os.makedirs(settings.UPLOAD_DIR, exist_ok=True)
+        file_path = os.path.join(settings.UPLOAD_DIR, unique_filename)
+
+        with open(file_path, "wb") as buf:
+            shutil.copyfileobj(file.file, buf)
+
+        web_url = f"/static/uploads/{unique_filename}"
+        image_path = file_path
+
+    from datetime import datetime
+    evidence_data = compute_evidence_trust(
+        live_lat=location_latitude,
+        live_lon=location_longitude,
+        image_path=image_path,
+        category_name=predicted_cat_name,
+        submission_timestamp=datetime.utcnow(),
+        gps_accuracy=gps_accuracy,
+        db=db,
+        complaint_description=translated_desc,
+    )
+
+    # ── 4. Duplicate Detection (Enhanced with Multimodal Verification) ─────────
     assigned_duplicate_id = duplicate_of_id
     duplicate_score = 0.0
     if not assigned_duplicate_id:
         is_dup, dup_id, score = check_duplicate_complaint(
             db, location_latitude, location_longitude, translated_desc, category.id,
-            distance_threshold_m=100.0, similarity_threshold=0.85
+            distance_threshold_m=100.0, similarity_threshold=0.85,
+            image_semantic_status=evidence_data.get("semantic_match_status")
         )
         if is_dup:
             assigned_duplicate_id = dup_id
@@ -616,33 +656,7 @@ def raise_complaint(
         # Route to department officer only for unique/parent complaint
         assign_officer_to_complaint(db, complaint)
 
-    # ── 8. Handle Image Upload & Multimodal Evidence Verification ─────────────
-    image_path = None
-    web_url = None
-    if file:
-        file_ext = os.path.splitext(file.filename or "image.jpg")[1] or ".jpg"
-        unique_filename = f"{uuid.uuid4()}{file_ext}"
-        os.makedirs(settings.UPLOAD_DIR, exist_ok=True)
-        file_path = os.path.join(settings.UPLOAD_DIR, unique_filename)
-
-        with open(file_path, "wb") as buf:
-            shutil.copyfileobj(file.file, buf)
-
-        web_url = f"/static/uploads/{unique_filename}"
-        image_path = file_path
-
-    # ── 9. Compute Hard-Gate Evidence Verification & Trust Score ──────────────
-    from datetime import datetime
-    evidence_data = compute_evidence_trust(
-        live_lat=location_latitude,
-        live_lon=location_longitude,
-        image_path=image_path,
-        category_name=predicted_cat_name,
-        submission_timestamp=datetime.utcnow(),
-        gps_accuracy=gps_accuracy,
-        db=db,
-        complaint_description=translated_desc,
-    )
+    # ── 8. Persist Uploaded Evidence & Verification Records ───────────────────
 
     if image_path:
         is_verified = (evidence_data["verification_decision"] in ["VERIFIED", "PARTIALLY_VERIFIED"])
@@ -706,7 +720,15 @@ def get_complaints(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user)
 ):
-    query = db.query(Complaint)
+    query = db.query(Complaint).options(
+        joinedload(Complaint.citizen),
+        joinedload(Complaint.category).joinedload(ComplaintCategory.department),
+        joinedload(Complaint.assigned_officer).joinedload(Officer.user),
+        selectinload(Complaint.images),
+        selectinload(Complaint.status_history).joinedload(ComplaintStatusHistory.changed_by_user),
+        joinedload(Complaint.ai_prediction).joinedload(AIPrediction.predicted_category),
+        joinedload(Complaint.evidence_check),
+    )
 
     if current_user.role.name == "Citizen":
         query = query.filter(Complaint.citizen_id == current_user.id)
