@@ -33,7 +33,16 @@ def get_current_user(
     except JWTError:
         raise credentials_exception
         
-    user = db.query(User).filter(User.email == token_data.email).first()
+    try:
+        user = db.query(User).filter(User.email == token_data.email).first()
+    except Exception:
+        # Transient connection drop (e.g. Neon wakeup / reconnect)
+        try:
+            db.rollback()
+            user = db.query(User).filter(User.email == token_data.email).first()
+        except Exception:
+            raise credentials_exception
+
     if not user:
         raise credentials_exception
     return user

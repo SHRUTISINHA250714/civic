@@ -718,6 +718,11 @@ INDIC_MARKER_WORDS = set(list(KANGLISH_CIVIC_MAP.keys()) + list(HINGLISH_CIVIC_M
     "kurentu", "myaanhollu", "gataar", "naali", "rasta", "khulla"
 ])
 
+# In-memory translation cache to avoid repeated network calls
+_TRANSLATION_CACHE: Dict[str, Tuple[str, str, float]] = {}
+_MAX_TRANSLATION_CACHE = 1000
+_GOOGLE_COOLDOWN_UNTIL = 0.0
+
 def contains_kannada_script(text: str) -> bool:
     """Checks if string contains Kannada Unicode characters (0x0C80 to 0x0CFF)."""
     return any('\u0C80' <= ch <= '\u0CFF' for ch in text)
@@ -730,9 +735,15 @@ def translate_text(text: str) -> Tuple[str, str, float]:
     Returns (translated_text, detected_lang, time_taken).
     """
     start_time = time.time()
-    text = text.strip()
+    text = (text or "").strip()
     if not text:
         return "", "en", 0.0
+
+    cache_key = text.lower()
+    if cache_key in _TRANSLATION_CACHE:
+        cached_trans, cached_lang, _ = _TRANSLATION_CACHE[cache_key]
+        return cached_trans, cached_lang, round(time.time() - start_time, 4)
+
 
     # 1. Check for Kannada Unicode script
     has_kannada_script = contains_kannada_script(text)
@@ -771,16 +782,29 @@ def translate_text(text: str) -> Tuple[str, str, float]:
     translated_text = text
     translated_online = False
 
-    # Tier 1: Online GoogleTranslator API
-    try:
-        translator = GoogleTranslator(source='auto', target='en')
-        candidate = translator.translate(text)
-        if candidate and len(candidate.strip()) > 1 and candidate.strip().lower() != text.strip().lower():
-            translated_text = candidate.strip()
-            translated_online = True
-    except Exception as e:
-        logger.warning("Online GoogleTranslator failed (%s). Proceeding with dictionary/normalizer fallback.", e)
+    # Tier 1: Online GoogleTranslator API (bypassed if temporarily rate-limited)
+    global _GOOGLE_COOLDOWN_UNTIL
+    now = time.time()
+    if now > _GOOGLE_COOLDOWN_UNTIL:
+        try:
+            translator = GoogleTranslator(source='auto', target='en')
+            candidate = translator.translate(text)
+            if candidate and len(candidate.strip()) > 1 and candidate.strip().lower() != text.strip().lower():
+                translated_text = candidate.strip()
+                translated_online = True
+        except Exception as e:
+            err_msg = str(e)
+            if "too many requests" in err_msg.lower() or "server error" in err_msg.lower() or "429" in err_msg:
+                # Set 60s cooldown so rapid keystrokes/requests don't stall or log spam
+                _GOOGLE_COOLDOWN_UNTIL = now + 60.0
+                logger.warning("GoogleTranslator rate limit encountered. Cooldown for 60s active; using dictionary fallback.")
+            else:
+                logger.warning("Online GoogleTranslator failed (%s). Proceeding with dictionary/normalizer fallback.", e)
+            translated_online = False
+    else:
+        # In cooldown period: immediately proceed to Tier 2 local dictionary normalizer
         translated_online = False
+
 
     # Tier 2: Linguistic civic dictionary normalizer (always enriches or falls back)
     # Pass 1: Multi-word phrase matching on full text BEFORE single-word tokenization
@@ -846,7 +870,11 @@ def translate_text(text: str) -> Tuple[str, str, float]:
         translated_text = text
 
     time_taken = round(time.time() - start_time, 4)
+    if len(_TRANSLATION_CACHE) >= _MAX_TRANSLATION_CACHE:
+        _TRANSLATION_CACHE.clear()
+    _TRANSLATION_CACHE[cache_key] = (translated_text, detected_lang, time_taken)
     return translated_text, detected_lang, time_taken
+
 
 def classify_complaint(text: str) -> Tuple[str, float]:
     """
@@ -1064,12 +1092,15 @@ def classify_complaint_structured(text: str) -> Dict[str, Any]:
     }
 
 def predict_priority(
-    text: str,
-    category_name: str,
+    text: Optional[str] = None,
+    category_name: str = "Others",
     impact_count: int = 1,
     location_address: Optional[str] = None,
     cat_conf: float = 0.85,
-    evidence_trust_score: float = 50.0
+    evidence_trust_score: float = 50.0,
+    description: Optional[str] = None,
+    ai_confidence: Optional[float] = None,
+    **kwargs
 ) -> Tuple[str, float]:
     """
     Explainable Hybrid Priority Score (0.0 to 1.0):
@@ -1082,7 +1113,12 @@ def predict_priority(
     Emergency Overrides:
       Incidents involving fire, live wires, flooding, or injury risk strictly override to 'Critical'.
     """
-    text_lower = (text or "").lower()
+    # Harmonize aliases
+    actual_text = text if text is not None else (description or "")
+    actual_cat_conf = ai_confidence if ai_confidence is not None else (cat_conf if cat_conf is not None else 0.85)
+
+    text_lower = actual_text.lower()
+
     address_lower = (location_address or "").lower()
     combined_text = f"{text_lower} {address_lower}"
 
@@ -1173,7 +1209,7 @@ def predict_priority(
     situation_score = 1.0 if has_high_context else 0.30
 
     # ── 6. AI / Evidence Confidence Component (10%) ──────────────────────────
-    confidence_norm = float(cat_conf) if cat_conf is not None else 0.85
+    confidence_norm = float(actual_cat_conf) if actual_cat_conf is not None else 0.85
     trust_norm = (float(evidence_trust_score) / 100.0) if evidence_trust_score is not None else 0.50
     ai_confidence_score = min(1.0, max(0.20, (confidence_norm * 0.60) + (trust_norm * 0.40)))
 

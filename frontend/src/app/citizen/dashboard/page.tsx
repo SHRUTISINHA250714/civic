@@ -265,18 +265,18 @@ export default function CitizenDashboard() {
   const handleDescriptionChange = (val: string) => {
     setDescription(val);
     if (previewTimeoutRef.current) clearTimeout(previewTimeoutRef.current);
-    if (val.trim().length >= 3) {
+    if (val.trim().length >= 6) {
       setIsAiPreviewLoading(true);
       previewTimeoutRef.current = setTimeout(async () => {
         try {
-          const preview = await api.previewAI(val);
+          const preview = await api.previewAI(val.trim());
           setAiPreview(preview);
         } catch (e) {
           console.error("AI preview error", e);
         } finally {
           setIsAiPreviewLoading(false);
         }
-      }, 350);
+      }, 650);
     } else {
       setAiPreview(null);
     }
