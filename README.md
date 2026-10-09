@@ -1,6 +1,6 @@
 # CivicAI Karnataka – Smart Civic Grievance Redressal System
 
-An AI-powered multimodal civic grievance management platform built specifically for the State of Karnataka (Bengaluru). The system enables citizens to report complaints via text, native scripts (Kannada / Hinglish / English), voice, and geotagged imagery. It uses computer vision (Ultralytics YOLOv8), OpenCV quality diagnostics, multimodal hard-gate evidence verification, NLP multilingual embeddings, geospatial duplicate detection, and dynamic routing to assign tickets to the correct state civic authority and track resolution through SLA enforcement.
+An AI-powered multimodal civic grievance management platform built specifically for the State of Karnataka (Bengaluru). The system enables citizens to report complaints via text, native scripts (Kannada / Hinglish / English), voice, and geotagged imagery. It uses computer vision (Ultralytics YOLO11 with `CivicAI_YOLO11n_best.pt`), OpenCV quality diagnostics, multimodal hard-gate evidence verification with two-sided image–text validation, NLP multilingual embeddings, multi-factor duplicate detection, and dynamic routing to assign tickets to the correct state civic authority and track resolution through SLA enforcement.
 
 ---
 
@@ -21,14 +21,14 @@ The platform is wired to four core municipal and utility agencies:
 
 * **Multilingual NLP Pipeline & Kanglish Boundary Precision**: Automatic detection of Kannada, Kanglish, Hinglish, and English with automated English translation and zero-shot grievance classification. Uses strict word boundaries to preserve genuine English containing Indian location names (e.g. "MG Road", "Indiranagar", "Koramangala") without false transliteration.
 * **Deterministic Department Routing**: Rule-based precedence routing grievances accurately to the responsible Karnataka authority (potholes and road damage to BBMP `Potholes & Damaged Roads`, garbage and litter to BSWML, water and sewage to BWSSB, high-voltage power to BESCOM).
-* **YOLOv8 & OpenCV Vision Analysis**: Real-time object detection and OpenCV quality diagnostics (evaluating blurriness via Laplacian variance, exposure levels, and resolution).
+* **YOLO11 & OpenCV Vision Analysis (CivicAI_YOLO11n_best.pt)**: Custom-trained civic hazard detection identifying 9 municipal classes (`pothole`, `garbage`, `fallen_tree`, `streetlight`, `water_leak`, `road_crack`, `damaged_road_sign`, `graffiti`, `damaged_electrical_pole`) along with OpenCV quality diagnostics (evaluating blurriness via Laplacian variance, exposure levels, and resolution).
 * **4-Gate Evidence Verification Engine**: Multi-gate validation preventing fraudulent submissions:
   1. *Geo*: Live device GPS cross-referenced against EXIF GPS coordinates ($\le 500\text{m}$ match, $\ge 5000\text{m}$ severe mismatch) with device accuracy radius.
   2. *Timestamp Freshness*: Rejects future timestamps ($> 10\text{m}$) and flags stale photos ($> 72\text{h}$).
-  3. *Semantic Agreement*: SentenceTransformers cosine matching ensuring photo matches reported category. Cross-category mismatches (e.g. pothole complaint with garbage photo) strictly locked to `REJECTED`.
-  4. *Duplicate Image Detection*: 64-bit difference perceptual hashing (`dHash`) with Hamming distance $\le 4$ detecting recycled photos across complaints.
+  3. *Two-Sided Image–Text Validation*: Cross-evaluates images against text/category on both citizen submission and officer resolution (`verify_resolution_evidence`). Mismatches flag for manual review (`MANUAL_REVIEW`, `is_verified = False`), strictly barring invalid or unaligned evidence from being accepted as verified.
+  4. *Duplicate Image & Decoupled Fraud Detection*: 64-bit perceptual hashing (`dHash`, Hamming distance $\le 4$) detects recycled photos across complaints, routing reused images to `MANUAL_REVIEW` while reserving `SUSPICIOUS` strictly for severe geospatial anomalies (GPS delta $> 5\text{km}$).
   * *Standardized Verification Badges*: Displays user-facing badges (*"Image matches complaint"* vs *"Image does not match complaint"*).
-* **Multimodal Duplicate Detection Guard**: 100m radius duplicate scan with cosine text similarity. Evaluates visual evidence *before* duplicate clustering, rejecting complaints with mismatched images (`MISMATCH`) from linking to active tickets.
+* **Multi-Factor Duplicate Complaint Detection**: Evaluates text similarity (50%), location proximity (35%), and image similarity (15%) within a 100m radius. Merges new reports into active parent incidents only when combined evidence supports the same incident. Conflicting evidence (e.g. matching image but location $>150\text{m}$ or conflicting text) routes to `MANUAL_REVIEW_CONFLICT` (never auto-merged, never marked suspicious). Borderline scores ($0.60 \le \text{Score} < 0.85$) route to `INCONCLUSIVE_REVIEW` as separate complaints. Citizen data and photos are fully preserved; duplicate linking increments parent `impact_count` and reassesses priority/SLAs.
 * **Dynamic SLA Enforcement & Duration Tracking**: Priority-driven timers (Low: 72h, Medium: 48h, High: 24h, Critical: 12h) displaying explicit duration strings, live remaining time countdowns, dynamic red breach warning pills, and resolution compliance (*"Met SLA"* vs *"Breached SLA"*).
 * **Bilingual Officer Operations**: Field officers view dual clearly-labeled sections: *"Original Complaint"* (verbatim citizen text + native audio player) and *"English Translation"* (normalized operational triage), with separate inspection of *"Citizen Evidence (Original)"* vs *"Officer Repair Verification (Completed)"*.
 * **Citizen Proof Verification & Instant UI Sync**: Citizens inspect officer resolution proof photos to approve closure (with 1–5 star ratings) or trigger automated re-dispatch, with immediate local state synchronization hiding the verification prompt once completed.
@@ -39,6 +39,14 @@ The platform is wired to four core municipal and utility agencies:
 ---
 
 ## 🔄 Recent Updates & Changelog
+
+### October 2026 — CivicAI YOLO11n Integration & Multi-Factor Verification
+1. **Custom Civic YOLO11 Model (`CivicAI_YOLO11n_best.pt`)**: Upgraded from generic COCO to dedicated civic hazard model identifying 9 municipal classes (`pothole`, `garbage`, `fallen_tree`, `streetlight`, `water_leak`, `road_crack`, `damaged_road_sign`, `graffiti`, `damaged_electrical_pole`).
+2. **Two-Sided Image–Text Validation**: Validates image content against complaint description on both citizen submission and officer resolution (`verify_resolution_evidence`), flagging mismatches as `MANUAL_REVIEW` and setting `is_verified = False` (never accepting invalid evidence as verified).
+3. **Multi-Factor Duplicate Complaint Detection**: Evaluates description similarity ($50\%$), location proximity ($35\%$), and image similarity ($15\%$) together. Links to active parent incidents only when combined evidence supports the same incident.
+4. **Conflict & Inconclusive Duplicate Routing**: Conflicting evidence (e.g. matching image but location $>150\text{m}$ or conflicting text) routes to `MANUAL_REVIEW_CONFLICT` without auto-merging or false fraud flagging. Inconclusive scores ($0.60 \le \text{score} < 0.85$) route to `INCONCLUSIVE_REVIEW` as separate complaints.
+5. **Data Preservation & Multi-Reporter Escalation**: Citizen reports and photos are preserved; duplicate linking increments parent's `impact_count` and triggers priority/SLA reassessment.
+6. **Decoupled Fraud Detection**: Reused image alone routes to `MANUAL_REVIEW`, reserving `SUSPICIOUS` strictly for severe GPS spoofing ($> 5\text{km}$).
 
 ### October 2026 — 11 Platform Fixes & Operational Enhancements
 1. **Password Visibility Toggle**: Interactive `Eye` / `EyeOff` icons on password and confirm-password fields in `/login` and `/register`.
@@ -129,6 +137,10 @@ All default test accounts are seeded via `python -m backend.app.seed`:
 * **Interactive Manual Testing Guide**: Full 8-track walkthrough in [TESTING_GUIDE.md](file:///c:/Users/Lenovo/Desktop/CIVIC/TESTING_GUIDE.md).
 * **Complete System Documentation & Architecture**: [PROJECT_DOCUMENTATION.md](file:///c:/Users/Lenovo/Desktop/CIVIC/PROJECT_DOCUMENTATION.md).
 * **17-Phase Implementation Blueprint**: [phases.md](file:///c:/Users/Lenovo/Desktop/CIVIC/phases.md).
+* **CivicAI YOLO11n & Multi-Factor Verification Suite (5 Scenarios)**:
+  ```powershell
+  python backend/test_civic_ai_yolo11_validation.py
+  ```
 * **11-Fix Comprehensive Verification Suite**:
   ```powershell
   python backend/test_civic_fixes_verification.py

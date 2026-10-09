@@ -26,7 +26,8 @@ from backend.app.services import (
     translate_text, classify_complaint, classify_complaint_structured, predict_priority,
     verify_image, get_detected_objects, transcribe_audio,
     check_duplicate_complaint, assign_officer_to_complaint,
-    compute_evidence_trust, compute_sla_deadline, get_sla_summary
+    compute_evidence_trust, compute_sla_deadline, compute_response_sla_deadline,
+    compute_resolution_sla_deadline, get_sla_summary, verify_resolution_evidence
 )
 from backend.app.services.duplicate import haversine_distance
 
@@ -312,6 +313,8 @@ def serialize_complaint(c: Complaint, db: Session, user_role: Optional[str] = No
         "duplicate_of_complaint_id": c.duplicate_of_complaint_id,
         "sla_deadline":             c.sla_deadline.isoformat() if c.sla_deadline else None,
         "sla_status":               c.sla_status or "Normal",
+        "response_sla_deadline":    c.response_sla_deadline.isoformat() if getattr(c, "response_sla_deadline", None) else None,
+        "response_sla_status":      getattr(c, "response_sla_status", "Pending") or "Pending",
         "is_escalated":             c.is_escalated or False,
         "citizen_verified":         c.citizen_verified,
         "citizen_feedback_rating":  c.citizen_feedback_rating,
@@ -512,15 +515,23 @@ def raise_complaint(
     # ── 4. Duplicate Detection (Enhanced with Multimodal Verification) ─────────
     assigned_duplicate_id = duplicate_of_id
     duplicate_score = 0.0
+    dup_review_flag = None
+    dup_details = {}
     if not assigned_duplicate_id:
-        is_dup, dup_id, score = check_duplicate_complaint(
+        is_dup, dup_id, score, dup_review_flag, dup_details = check_duplicate_complaint(
             db, location_latitude, location_longitude, translated_desc, category.id,
             distance_threshold_m=100.0, similarity_threshold=0.85,
-            image_semantic_status=evidence_data.get("semantic_match_status")
+            image_path=image_path,
+            image_semantic_status=evidence_data.get("semantic_match_status"),
+            perceptual_hash=evidence_data.get("perceptual_hash"),
+            return_details=True
         )
         if is_dup:
             assigned_duplicate_id = dup_id
             duplicate_score = score
+        elif dup_review_flag in ["MANUAL_REVIEW_CONFLICT", "INCONCLUSIVE_REVIEW"]:
+            # Requirements 3 & 5: Flag for manual review instead of auto-merging or marking suspicious
+            evidence_data["verification_decision"] = "MANUAL_REVIEW"
     else:
         duplicate_score = 1.0
 
@@ -555,9 +566,10 @@ def raise_complaint(
                 # Idempotent response: return existing child complaint without duplicate creation or impact inflation
                 return serialize_complaint(existing_report, db)
 
-    # ── 5. Compute SLA Deadline ───────────────────────────────────────────────
+    # ── 5. Compute SLA Deadlines (Response & Resolution SLAs) ─────────────────
     from datetime import datetime
-    sla_deadline = compute_sla_deadline(db, category.id, predicted_priority)
+    sla_deadline = compute_resolution_sla_deadline(db, category.id, predicted_priority)
+    response_sla_deadline = compute_response_sla_deadline(db, category.id, predicted_priority)
 
     # Status for child report should reflect parent's status (never silently Closed!)
     initial_status = parent_complaint.status if (assigned_duplicate_id and parent_complaint) else "Registered"
@@ -579,7 +591,9 @@ def raise_complaint(
         duplicate_of_complaint_id=assigned_duplicate_id,
         impact_count=1,
         sla_deadline=sla_deadline,
+        response_sla_deadline=response_sla_deadline,
         sla_status="Normal",
+        response_sla_status="Pending",
         is_escalated=False,
         reopen_count=0,
     )
@@ -595,10 +609,16 @@ def raise_complaint(
             changed_by_user_id=current_user.id
         ))
     else:
+        init_remarks = "Complaint registered in system."
+        if dup_review_flag == "MANUAL_REVIEW_CONFLICT":
+            init_remarks = f"Complaint registered and flagged for manual review: {dup_details.get('reason', 'Image matches existing complaint but location/description differs.')}"
+        elif dup_review_flag == "INCONCLUSIVE_REVIEW":
+            init_remarks = f"Complaint registered and flagged for manual review: {dup_details.get('reason', 'Borderline similarity with nearby complaint.')}"
+
         db.add(ComplaintStatusHistory(
             complaint_id=complaint.id,
             status="Registered",
-            remarks="Complaint registered in system.",
+            remarks=init_remarks,
             changed_by_user_id=current_user.id
         ))
 
@@ -636,7 +656,8 @@ def raise_complaint(
         if prio_rank.get(new_parent_prio, 2) > prio_rank.get(parent_complaint.priority, 2):
             old_prio = parent_complaint.priority
             parent_complaint.priority = new_parent_prio
-            parent_complaint.sla_deadline = compute_sla_deadline(db, parent_complaint.category_id, new_parent_prio)
+            parent_complaint.sla_deadline = compute_resolution_sla_deadline(db, parent_complaint.category_id, new_parent_prio)
+            parent_complaint.response_sla_deadline = compute_response_sla_deadline(db, parent_complaint.category_id, new_parent_prio)
             db.add(ComplaintStatusHistory(
                 complaint_id=parent_complaint.id,
                 status=parent_complaint.status,
@@ -895,6 +916,14 @@ def update_complaint_status(
             )
 
     complaint.status = new_status
+    now = datetime.utcnow()
+    if new_status in ["Accepted", "In Progress", "Resolved", "Closed"]:
+        resp_deadline = complaint.response_sla_deadline or compute_response_sla_deadline(
+            db, complaint.category_id, complaint.priority, complaint.created_at
+        )
+        if resp_deadline:
+            complaint.response_sla_status = "Met" if now <= resp_deadline else "Breached"
+
     db.add(ComplaintStatusHistory(
         complaint_id=complaint.id,
         status=new_status,
@@ -1023,7 +1052,12 @@ def resolve_complaint(
         buf.write(contents)
 
     web_url = f"/static/uploads/{unique_filename}"
-    is_verified, img_conf = verify_image(file_path, complaint.category.name)
+    is_verified, img_conf, res_quality, res_details = verify_resolution_evidence(
+        image_path=file_path,
+        category_name=complaint.category.name if complaint.category else "General Civic",
+        resolution_remarks=clean_remarks,
+        complaint_description=complaint.description or ""
+    )
 
     db.add(ComplaintImage(
         complaint_id=complaint.id,
@@ -1031,6 +1065,7 @@ def resolve_complaint(
         image_type="Resolution",
         is_verified=is_verified,
         confidence_score=img_conf,
+        quality_status=res_quality,
     ))
 
     # Move to Resolved — awaiting citizen verification
@@ -1043,6 +1078,15 @@ def resolve_complaint(
         remarks=remarks,
         changed_by_user_id=current_user.id
     ))
+
+    # Requirement 2: Flag mismatches for manual review and prevent invalid evidence from being accepted as verified
+    if not is_verified:
+        db.add(ComplaintStatusHistory(
+            complaint_id=complaint.id,
+            status="Resolved",
+            remarks=f"Resolution proof flagged for manual review: {res_details.get('details', 'Photo does not match reported resolution')}. Evidence is unverified.",
+            changed_by_user_id=current_user.id
+        ))
 
     # Notify Citizen to verify resolution
     db.add(Notification(
@@ -1142,9 +1186,11 @@ def citizen_verify_resolution(
         # ── Citizen REJECTS → Reopen complaint ────────────────────────────────
         complaint.status = "Reopened"
         complaint.reopen_count = (complaint.reopen_count or 0) + 1
-        # Reset SLA deadline on reopen (give a fresh window)
-        complaint.sla_deadline = compute_sla_deadline(db, complaint.category_id, complaint.priority)
+        # Reset SLA deadlines on reopen (give a fresh window)
+        complaint.sla_deadline = compute_resolution_sla_deadline(db, complaint.category_id, complaint.priority)
+        complaint.response_sla_deadline = compute_response_sla_deadline(db, complaint.category_id, complaint.priority)
         complaint.sla_status = "Normal"
+        complaint.response_sla_status = "Pending"
         complaint.is_escalated = False
 
         remarks = (

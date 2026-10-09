@@ -154,8 +154,24 @@ class PredictiveIntelligenceService:
                     self.zone_encoder = meta["zone_encoder"]
                     self.dept_encoder = meta["dept_encoder"]
                     self.priority_encoder = meta["priority_encoder"]
-                    self.ward_historical_stats = meta["ward_historical_stats"]
-                    self.category_historical_stats = meta["category_historical_stats"]
+                    self.ward_historical_stats = defaultdict(lambda: {
+                        "total_count": 0,
+                        "avg_resolution_hours": 36.0,
+                        "breach_rate": 0.15,
+                        "top_categories": Counter(),
+                        "zone": "South"
+                    })
+                    for k, v in meta.get("ward_historical_stats", {}).items():
+                        self.ward_historical_stats[k] = v
+
+                    self.category_historical_stats = defaultdict(lambda: {
+                        "total_count": 0,
+                        "avg_resolution_hours": 36.0,
+                        "breach_rate": 0.15
+                    })
+                    for k, v in meta.get("category_historical_stats", {}).items():
+                        self.category_historical_stats[k] = v
+
                     self.training_stats = meta["training_stats"]
                     self.daily_intake_history = meta.get("daily_intake_history", [])
                     self.is_trained = True
@@ -180,6 +196,18 @@ class PredictiveIntelligenceService:
         """
         records = []
         date_counts = defaultdict(lambda: defaultdict(int))
+        self.ward_historical_stats = defaultdict(lambda: {
+            "total_count": 0,
+            "avg_resolution_hours": 36.0,
+            "breach_rate": 0.15,
+            "top_categories": Counter(),
+            "zone": "South"
+        })
+        self.category_historical_stats = defaultdict(lambda: {
+            "total_count": 0,
+            "avg_resolution_hours": 36.0,
+            "breach_rate": 0.15
+        })
         
         if not os.path.exists(DATASET_CSV_PATH):
             self._generate_synthetic_baseline()
@@ -215,16 +243,17 @@ class PredictiveIntelligenceService:
                 is_monsoon = 1 if month in [6, 7, 8, 9] else 0
                 is_weekend = 1 if day_of_week in [5, 6] else 0
                 
-                # Priority mapping
+                # Priority mapping and resolution SLA targets:
+                # Critical: 24h, High: 48h, Medium: 72h, Low: 120h
                 if cat_norm in ["Pothole", "Sewage Overflow", "Fallen Electric Wire"]:
                     priority = "High" if not is_monsoon else "Critical"
-                    base_sla = 24.0
+                    base_sla = 24.0 if priority == "Critical" else 48.0
                 elif cat_norm in ["Garbage", "Water Leakage", "Tree Fall"]:
                     priority = "Medium"
-                    base_sla = 48.0
+                    base_sla = 72.0
                 else:
                     priority = "Low"
-                    base_sla = 72.0
+                    base_sla = 120.0
 
                 complexity = 1.3 if is_monsoon else 1.0
                 weekend_delay = 12.0 if is_weekend else 0.0
@@ -310,8 +339,17 @@ class PredictiveIntelligenceService:
             }
             
         for ward, hrs in ward_hours.items():
-            self.ward_historical_stats[ward]["avg_resolution_hours"] = round(float(np.mean(hrs)), 1)
-            self.ward_historical_stats[ward]["breach_rate"] = round(float(np.mean(ward_breaches[ward])), 3)
+            if ward not in self.ward_historical_stats:
+                self.ward_historical_stats[ward] = {
+                    "total_count": len(hrs),
+                    "avg_resolution_hours": round(float(np.mean(hrs)), 1),
+                    "breach_rate": round(float(np.mean(ward_breaches[ward])), 3),
+                    "top_categories": Counter(),
+                    "zone": WARD_TO_ZONE.get(ward.lower(), "South")
+                }
+            else:
+                self.ward_historical_stats[ward]["avg_resolution_hours"] = round(float(np.mean(hrs)), 1)
+                self.ward_historical_stats[ward]["breach_rate"] = round(float(np.mean(ward_breaches[ward])), 3)
 
         # ── Encode Features ──────────────────────────────────────────────────
         all_cats = list(set([r["category"] for r in records] + ["Garbage", "Pothole", "Streetlight", "Water Leakage", "Sewage Overflow", "Tree Fall", "Road Damage", "Others"]))
@@ -506,7 +544,7 @@ class PredictiveIntelligenceService:
             sla_code = float(i % 3)
             impact = float(1 + (i % 5))
             
-            base_sla = 12.0 if prio == "Critical" else (24.0 if prio == "High" else (48.0 if prio == "Medium" else 72.0))
+            base_sla = 24.0 if prio == "Critical" else (48.0 if prio == "High" else (72.0 if prio == "Medium" else 120.0))
             actual_res_hours = max(2.0, (base_sla * 0.6) + (10.0 if is_monsoon else 0.0) + (8.0 if is_weekend else 0.0) + ((i % 11) - 5))
             is_breached = 1 if actual_res_hours > base_sla else 0
 
@@ -559,9 +597,10 @@ class PredictiveIntelligenceService:
             if c.status in ["Resolved", "Closed"] and c.updated_at and c.created_at:
                 actual_res_hours = max(2.0, (c.updated_at - c.created_at).total_seconds() / 3600.0)
             else:
-                actual_res_hours = 24.0 if c.priority == "Critical" else (36.0 if c.priority == "High" else 48.0)
+                actual_res_hours = 20.0 if c.priority == "Critical" else (40.0 if c.priority == "High" else 60.0)
 
-            is_breached = 1 if (c.sla_status == "Breached") else (1 if actual_res_hours > 48.0 else 0)
+            target_res_sla = 24.0 if c.priority == "Critical" else (48.0 if c.priority == "High" else (72.0 if c.priority == "Medium" else 120.0))
+            is_breached = 1 if (c.sla_status == "Breached" or actual_res_hours > target_res_sla) else 0
             sla_code = 0.0 if c.sla_status == "Normal" else (1.0 if c.sla_status == "Warning" else 2.0)
             impact = float(getattr(c, "impact_count", 1) or 1)
 
@@ -669,7 +708,8 @@ class PredictiveIntelligenceService:
             factors.append(f"Caseload Backlog: {int(backlog_val)} active cases pending in {dept}")
         if sla_status in ["Warning", "Breached"]:
             factors.append(f"SLA Time Criticality: Complaint currently in '{sla_status}' state")
-        if self.ward_historical_stats[ward]["breach_rate"] > 0.25:
+        w_stat = self.ward_historical_stats.get(ward, {})
+        if w_stat.get("breach_rate", 0.15) > 0.25:
             factors.append(f"Ward '{ward}' has elevated historical backlog risk")
         if not factors:
             factors.append("Standard operating load and favorable resolution window")

@@ -41,10 +41,14 @@ from backend.app.services.ai import encoder_model, yolo_model
 from backend.app.core.config import settings
 
 # ── Civic Object Taxonomy & Vision Indicators ────────────────────────────────
-OUTDOOR_CIVIC_OBJECTS = {
+CIVIC_HAZARD_OBJECTS = {
+    "pothole", "garbage", "fallen_tree", "streetlight", "water_leak",
+    "road_crack", "damaged_road_sign", "graffiti", "damaged_electrical_pole"
+}
+OUTDOOR_CIVIC_OBJECTS = CIVIC_HAZARD_OBJECTS.union({
     "car", "truck", "bus", "motorcycle", "bicycle", "person", "dog", "cat",
     "traffic light", "fire hydrant", "stop sign", "bench", "potted plant", "bird"
-}
+})
 STRICT_INDOOR_OBJECTS = {
     "tv", "laptop", "mouse", "keyboard", "cell phone", "sofa", "bed", "refrigerator"
 }
@@ -447,6 +451,18 @@ def evaluate_semantic_match(
     if is_garbage_complaint and (is_pothole_img_hint or has_road_damage_objects) and not (is_garbage_img_hint or has_garbage_objects):
         return "MISMATCH", 0.95, "Road Damage / Pothole", "Image depicts road damage/potholes, but complaint is for garbage/waste."
 
+    # Direct Civic Hazard Positive Matches (CivicAI_YOLO11n_best.pt)
+    if is_pothole_complaint and (has_road_damage_objects or bool(detected_set & {"pothole", "road_crack", "damaged_road_sign"})):
+        return "MATCH", 0.95, "Potholes & Damaged Roads", "Civic AI model confirmed road damage/pothole directly matching complaint."
+    if is_garbage_complaint and (has_garbage_objects or "garbage" in detected_set):
+        return "MATCH", 0.95, "Garbage & Waste Collection", "Civic AI model confirmed garbage/solid waste directly matching complaint."
+    if (is_streetlight_complaint or is_power_complaint) and bool(detected_set & {"streetlight", "damaged_electrical_pole"}):
+        return "MATCH", 0.95, "Streetlight & Infrastructure", "Civic AI model confirmed lighting/electrical hazard directly matching complaint."
+    if is_water_complaint and "water_leak" in detected_set:
+        return "MATCH", 0.95, "Water Leakage & Drainage", "Civic AI model confirmed water leak directly matching complaint."
+    if bool(detected_set & {"fallen_tree"}) and any(k in cat_lower for k in ["tree", "park", "storm"]):
+        return "MATCH", 0.95, "Trees & Parks", "Civic AI model confirmed fallen tree directly matching complaint."
+
     # Fallback to SentenceTransformer embedding similarity if available
     sim_score = 0.65
     if encoder_model:
@@ -636,13 +652,16 @@ def compute_evidence_trust(
     # ── 6. Hard-Gate Decision Engine ──────────────────────────────────────────
     # Critical Rule: Semantic mismatch must NEVER become VERIFIED
     if yolo_info["is_indoor_device"]:
-        verification_decision = "REJECTED"
+        verification_decision = "MANUAL_REVIEW"
     elif semantic_status == "MISMATCH":
-        verification_decision = "REJECTED"
+        # Requirement 2: Flag mismatches for manual review and prevent invalid evidence from being accepted as verified
+        verification_decision = "MANUAL_REVIEW"
     elif geo_status == "MISMATCH" and gps_distance_m and gps_distance_m >= GPS_CRITICAL_MISMATCH_METERS:
         verification_decision = "SUSPICIOUS"
     elif is_reused_image:
-        verification_decision = "SUSPICIOUS"
+        # Requirement 5: A reused image alone must NOT classify a complaint as suspicious
+        # Route to MANUAL_REVIEW so officers can verify if neighbors reported the same incident
+        verification_decision = "MANUAL_REVIEW"
     elif freshness_status == "FUTURE":
         verification_decision = "MANUAL_REVIEW"
     elif quality_info["status"] in ["BLURRY", "UNDEREXPOSED", "LOW_RES"]:
@@ -732,3 +751,91 @@ def compute_evidence_trust(
         # Additional Phase 8 structured detection payload for image record
         "bounding_boxes": json.dumps(yolo_info["bounding_boxes"]),
     }
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Officer Resolution Evidence Verification
+# ─────────────────────────────────────────────────────────────────────────────
+def verify_resolution_evidence(
+    image_path: str,
+    category_name: str,
+    resolution_remarks: str,
+    complaint_description: str = "",
+) -> Tuple[bool, float, str, Dict[str, Any]]:
+    """
+    Verifies that the officer's uploaded resolution proof matches the reported
+    resolution action, remediation remarks, and complaint category.
+    Returns:
+      (is_verified: bool, confidence_score: float, quality_status: str, details_dict: Dict)
+    """
+    if not image_path or not os.path.exists(image_path):
+        return False, 0.0, "INVALID_FILE", {"details": "Resolution image file does not exist."}
+
+    # 1. Quality check using OpenCV / PIL
+    quality = check_image_quality(image_path)
+    if quality.get("status") in ["UNREADABLE", "INVALID", "LOW_RES"]:
+        return False, 0.30, "QUALITY_FAIL", {"details": quality.get("details", "Resolution image quality is unreadable.")}
+
+    # 2. YOLO Object Detection with Civic hazard model
+    yolo_res = run_yolo_detection(image_path)
+    detected = yolo_res.get("detected_objects", [])
+    is_indoor = yolo_res.get("is_indoor_device", False)
+
+    if is_indoor:
+        return False, 0.20, "INDOOR_DEVICE_MISMATCH", {
+            "details": "Resolution photo depicts an indoor device, screen, or household furniture rather than completed municipal remediation."
+        }
+
+    detected_set = set(d.lower() for d in detected)
+    cat_lower = (category_name or "").lower()
+
+    # Mismatch detection: check if officer submitted active hazard of a conflicting category
+    is_pothole_cat = any(k in cat_lower for k in ["pothole", "road", "asphalt", "crater"])
+    is_garbage_cat = any(k in cat_lower for k in ["garbage", "waste", "trash", "dump"])
+    is_streetlight_cat = any(k in cat_lower for k in ["streetlight", "lighting", "lamp"])
+    is_water_cat = any(k in cat_lower for k in ["water", "leak", "pipe", "drain"])
+
+    has_garbage = "garbage" in detected_set
+    has_pothole = "pothole" in detected_set or "road_crack" in detected_set
+
+    if is_streetlight_cat and has_garbage and not ("streetlight" in detected_set):
+        return False, 0.35, "MISMATCH_MANUAL_REVIEW", {
+            "details": "Resolution photo depicts garbage instead of streetlight repair. Flagged for manual review."
+        }
+    if is_pothole_cat and has_garbage and not has_pothole:
+        return False, 0.35, "MISMATCH_MANUAL_REVIEW", {
+            "details": "Resolution photo depicts garbage dump instead of road repair. Flagged for manual review."
+        }
+    if is_garbage_cat and has_pothole and not has_garbage:
+        return False, 0.35, "MISMATCH_MANUAL_REVIEW", {
+            "details": "Resolution photo depicts road damage instead of waste cleanup. Flagged for manual review."
+        }
+
+    # 3. NLP Semantic agreement between resolution remarks and category
+    sim_score = 0.70
+    if encoder_model:
+        try:
+            target_profile = CATEGORY_SEMANTIC_PROFILES.get(
+                "pothole" if is_pothole_cat else "garbage" if is_garbage_cat else "streetlight" if is_streetlight_cat else "water leakage" if is_water_cat else "civic infrastructure",
+                category_name
+            )
+            emb_remarks = encoder_model.encode(f"{category_name} remediation: {resolution_remarks[:200]}", convert_to_tensor=True)
+            emb_profile = encoder_model.encode(target_profile, convert_to_tensor=True)
+            from sentence_transformers import util
+            cos_sim = float(util.cos_sim(emb_remarks, emb_profile)[0][0].item())
+            sim_score = max(0.40, min(0.98, cos_sim))
+        except Exception:
+            sim_score = 0.70
+
+    if yolo_res.get("has_civic_objects", True) or sim_score >= 0.45:
+        conf = round(min(0.98, max(0.70, sim_score)), 2)
+        return True, conf, "PASS", {
+            "details": "Resolution proof verified against reported remediation and civic context.",
+            "detected_objects": detected
+        }
+    else:
+        return False, 0.45, "MISMATCH_MANUAL_REVIEW", {
+            "details": "Resolution proof lacks semantic correlation with reported remediation action. Flagged for manual review.",
+            "detected_objects": detected
+        }
+

@@ -18,13 +18,14 @@ class ComplaintCategory(Base):
     sla_policies = relationship("SLAPolicy", back_populates="category")
 
 class SLAPolicy(Base):
-    """SLA resolution time policies per category & priority."""
+    """SLA resolution & response time policies per category & priority."""
     __tablename__ = "sla_policies"
     
     id = Column(Integer, primary_key=True, index=True)
     category_id = Column(Integer, ForeignKey("complaint_categories.id"), nullable=False)
     priority = Column(String, nullable=False)          # Low, Medium, High, Critical
-    resolution_hours = Column(Float, nullable=False)   # e.g. 72, 48, 24, 12
+    resolution_hours = Column(Float, nullable=False)   # e.g. 120, 72, 48, 24
+    response_hours = Column(Float, nullable=True, default=8.0) # e.g. 24, 8, 4, 2
     warning_threshold_pct = Column(Float, default=0.75)  # 75% of time elapsed → Warning
     created_at = Column(DateTime, default=datetime.utcnow)
     
@@ -58,9 +59,11 @@ class Complaint(Base):
     duplicate_of_complaint_id = Column(Integer, ForeignKey("complaints.id"), nullable=True)
     impact_count = Column(Integer, default=1)
     
-    # SLA Tracking
-    sla_deadline = Column(DateTime, nullable=True)
-    sla_status = Column(String, default="Normal")  # Normal, Warning, Breached
+    # SLA Tracking (Resolution & Response SLAs)
+    sla_deadline = Column(DateTime, nullable=True)          # Resolution deadline
+    response_sla_deadline = Column(DateTime, nullable=True) # Response deadline
+    sla_status = Column(String, default="Normal")           # Normal, Warning, Breached (Resolution)
+    response_sla_status = Column(String, default="Pending") # Pending, Met, Breached (Response)
     is_escalated = Column(Boolean, default=False)
     
     # Citizen Feedback / Verification of Resolution

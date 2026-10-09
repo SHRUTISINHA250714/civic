@@ -31,7 +31,7 @@ flowchart TD
 
     subgraph AIIntelligence ["🧠 MULTIMODAL AI INTELLIGENCE LAYER"]
         P7["Phase 7: NLP Classification & Priority"]
-        P8["Phase 8: Computer Vision (YOLOv8)"]
+        P8["Phase 8: Computer Vision (YOLO11)"]
         P9["Phase 9: Multimodal Evidence Trust Scoring"]
         P10["Phase 10: Spatial & Semantic Duplicate AI"]
         
@@ -269,7 +269,7 @@ flowchart TD
 
 ---
 
-### Phase 8: Structured Computer Vision & Image Quality Validation (YOLOv8 & OpenCV)
+### Phase 8: Structured Computer Vision & Image Quality Validation (YOLO11 & OpenCV)
 
 #### Flowchart
 ```mermaid
@@ -279,9 +279,9 @@ flowchart TD
     Pre -->|Brightness < 25 or > 245| FlagExp["Flag EXPOSURE ISSUE"]
     Pre -->|Pass| PassQ["Quality: PASS"]
     
-    Img --> YOLO["Ultralytics YOLOv8n\nNeural Network"]
-    YOLO --> Detect["Object Detection & Bounding Boxes\n[x1, y1, x2, y2] + Confidences"]
-    Detect --> Classes["Identify Civic Hazards\n(potholes, garbage piles, broken cables, poles)"]
+    Img --> YOLO["Ultralytics YOLO11n\n(CivicAI_YOLO11n_best.pt)"]
+    YOLO --> Detect["Civic Hazard Detection & Boxes\n[x1, y1, x2, y2] + Confidences"]
+    Detect --> Classes["9 Municipal Hazard Classes\n(pothole, garbage, fallen_tree, streetlight,\nwater_leak, road_crack, damaged_road_sign,\ngraffiti, damaged_electrical_pole)"]
     
     Img --> EXIF["PIL / piexif Metadata Parser"]
     EXIF --> EXIFData["Extract EXIF GPS (DMS)\n& Capture Timestamp (UTC)"]
@@ -294,14 +294,16 @@ flowchart TD
 ```
 
 #### How It Works (Short Description)
-* Ingests citizen-uploaded photos and runs real-time object detection using a lightweight YOLOv8 network (`yolov8n.pt`).
+* Ingests citizen and officer uploaded photos and runs real-time object detection using the custom-trained municipal model `CivicAI_YOLO11n_best.pt`.
+* Identifies 9 specialized civic hazard classes: `pothole`, `garbage`, `fallen_tree`, `streetlight`, `water_leak`, `road_crack`, `damaged_road_sign`, `graffiti`, `damaged_electrical_pole`.
 * Extracts structured detection payloads including categorized object classes, bounding boxes (`[x1, y1, x2, y2]`), and per-class confidence scores.
+* Provides direct semantic hazard matching connecting municipal categories directly to model outputs without brittle keyword heuristics.
 * Executes automated **OpenCV image quality diagnostics**:
   1. **Blurriness**: Evaluates Laplacian variance ($\text{var} < 25.0 \implies \text{BLURRY}$).
   2. **Exposure / Contrast**: Flags underexposed ($< 25$) or overexposed ($> 245$) whiteout images.
   3. **Resolution**: Enforces minimum dimensional sanity ($100 \times 100\text{ px}$).
 * Uses PIL and `piexif` to extract embedded GPS coordinates and capture timestamps across standard EXIF and modern IFD sub-tables.
-* **Key Files**: `backend/app/services/evidence.py`, `yolov8n.pt`.
+* **Key Files**: `backend/app/services/evidence.py`, `backend/app/services/ai.py`, `CivicAI_YOLO11n_best.pt`.
 
 ---
 
@@ -324,15 +326,16 @@ flowchart TD
         ServerTime -->|Future > 10m| Future["FUTURE ANOMALY\n(MANUAL_REVIEW)"]
     end
 
-    subgraph Gate3 ["GATE 3: SEMANTIC ALIGNMENT"]
-        NLPDesc["Complaint Category & Description"] <--> YOLOFeat["YOLO Objects & Image Context"]
-        NLPDesc -->|Category Matches Visuals| SemMatch["MATCH (+45 pts)"]
-        NLPDesc -->|Cross-Category Mismatch\ne.g. Pothole vs Garbage| SemMismatch["HARD MISMATCH\n(REJECTED)"]
+    subgraph Gate3 ["GATE 3: TWO-SIDED IMAGE-TEXT VALIDATION"]
+        NLPDesc["Complaint / Resolution Text & Category"] <--> YOLOFeat["YOLO11 Hazards & Visual Features"]
+        NLPDesc -->|Visuals Match Description| SemMatch["MATCH (+45 pts)"]
+        NLPDesc -->|Invalid / Unrelated Evidence| SemReview["MISMATCH\n(MANUAL_REVIEW, is_verified=False)"]
+        NLPDesc -->|Blatant Category Conflict\ne.g. Streetlight vs Garbage| SemMismatch["HARD MISMATCH\n(REJECTED)"]
     end
 
-    subgraph Gate4 ["GATE 4: REUSED IMAGE DETECTION"]
+    subgraph Gate4 ["GATE 4: REUSED IMAGE & DECOUPLED FRAUD GUARD"]
         CurImg["Current Photo dHash"] <--> PrevImgs["Database Complaint Images"]
-        CurImg -->|Hamming Distance <= 4| Reused["REUSED IMAGE\n(SUSPICIOUS)"]
+        CurImg -->|Hamming Distance <= 4| Reused["REUSED IMAGE\n(MANUAL_REVIEW)"]
     end
 
     Gate1 --> DecisionEngine{"Hard-Gate Decision Engine"}
@@ -342,9 +345,9 @@ flowchart TD
 
     DecisionEngine -->|All Gates Pass| DecVerified["VERIFIED"]
     DecisionEngine -->|Minor Quality / Missing EXIF| DecPartial["PARTIALLY_VERIFIED"]
-    DecisionEngine -->|Stale / Future / Borderline| DecReview["MANUAL_REVIEW"]
-    DecisionEngine -->|Severe Distance / Reused Photo| DecSuspicious["SUSPICIOUS"]
-    DecisionEngine -->|Semantic Mismatch / Indoor Device| DecRejected["REJECTED"]
+    DecisionEngine -->|Stale / Future / Reused / Quality| DecReview["MANUAL_REVIEW"]
+    DecisionEngine -->|Severe Distance Delta (>5km)| DecSuspicious["SUSPICIOUS"]
+    DecisionEngine -->|Blatant Category Mismatch| DecRejected["REJECTED"]
 
     DecisionEngine --> CalcScore["Weighted Trust Score (0 - 100%)\nGPS (35%) + Time (20%) + Semantic (45%)"]
     CalcScore --> Audit["GET /api/v1/complaints/{id}/evidence\nAudit Trail & Officer Dashboard"]
@@ -354,8 +357,8 @@ flowchart TD
 * Enforces server-side authority with **4 Hard Verification Gates** to prevent spoofed, fraudulent, or recycled submissions:
   1. **Gate 1 (Geospatial Cross-Validation)**: Calculates Haversine distance between reported live device GPS and photo EXIF coordinates. Distance $\le 500\text{m}$ confirms `MATCH`. Distance $\ge 5000\text{m}$ triggers `SUSPICIOUS`. Missing EXIF gracefully falls back to `EXIF_MISSING`.
   2. **Gate 2 (Timestamp Freshness)**: Ensures photo was taken within 72 hours (`FRESH`). Photos $> 72\text{h}$ are flagged `STALE`, and future timestamps ($> 10\text{m}$) are flagged `FUTURE` $\to$ `MANUAL_REVIEW`.
-  3. **Gate 3 (Semantic Agreement & Mismatch Guard)**: Cross-checks complaint text and category against image features using `all-MiniLM-L6-v2` SentenceTransformers and YOLO indicators. Strict negative filters detect cross-category mismatches (e.g., streetlight or pothole complaint with garbage/waste photo, or road complaint with indoor furniture). **Critical rule: Semantic mismatches are barred from ever receiving `VERIFIED` status and are routed to `REJECTED`**.
-  4. **Gate 4 (Reused Image Detection)**: Computes a 64-bit difference perceptual hash (`dHash`). Bitwise Hamming distance $\le 4$ flags duplicate or re-submitted images across complaints, setting `is_reused_image = True` $\to$ `SUSPICIOUS`.
+  3. **Gate 3 (Two-Sided Image–Text Validation)**: Cross-evaluates images against text and category on both citizen submission and officer resolution (`verify_resolution_evidence`). Uses `CivicAI_YOLO11n_best.pt` detections and SentenceTransformers `all-MiniLM-L6-v2`. Mismatches flag for manual review (`MANUAL_REVIEW`, `is_verified = False`), strictly preventing invalid evidence from ever being accepted as verified. Blatant cross-category conflicts (e.g. streetlight complaint with garbage photo) route to `REJECTED`.
+  4. **Gate 4 (Reused Image Detection & Decoupled Fraud Guard)**: Computes a 64-bit difference perceptual hash (`dHash`). Bitwise Hamming distance $\le 4$ flags duplicate or re-submitted images across complaints, setting `is_reused_image = True` $\to$ `MANUAL_REVIEW`. Reused images alone no longer mark complaints as `SUSPICIOUS`; `SUSPICIOUS` is decoupled and strictly reserved for severe GPS anomalies ($> 5\text{km}$).
 * **Explicit User-Facing Image Verification Result**: Computes a standardized `image_verification_result` string exposed across Citizen and Officer dashboards:
   - `"Image matches complaint"` for verified semantic correspondence (`MATCH`).
   - `"Image does not match complaint"` for cross-category discrepancies (`MISMATCH`).
@@ -363,36 +366,41 @@ flowchart TD
 * **Decision States**: `VERIFIED`, `PARTIALLY_VERIFIED`, `MANUAL_REVIEW`, `SUSPICIOUS`, `REJECTED`.
 * **Composite Trust Score (0–100%)**: Weighted composition: GPS ($35\%$), Timestamp ($20\%$), Semantic Vision ($45\%$). Clamped to $\le 24\%$ if `REJECTED` and $\le 35\%$ if `SUSPICIOUS`.
 * **Audit API Endpoint**: `GET /api/v1/complaints/{id}/evidence` returns complete gate telemetry and explainable audit logs.
-* **Key Files**: `backend/app/services/evidence.py`, `backend/test_evidence_gates.py`, `backend/test_civic_fixes_verification.py`.
+* **Key Files**: `backend/app/services/evidence.py`, `backend/test_civic_ai_yolo11_validation.py`, `backend/test_evidence_gates.py`, `backend/test_civic_fixes_verification.py`.
 
 ---
 
-### Phase 10: Spatial & Semantic Duplicate Detection Engine
+### Phase 10: Multi-Factor Duplicate & Incident Detection Engine
 
 #### Flowchart
 ```mermaid
 flowchart TD
-    New["New Incoming Complaint\n(Lat, Lon, Category, Description)"] --> Trans["Tier 1/2 Cross-Lingual Translation & Normalization\n(Kannada, Kanglish, Hinglish ➔ Standard English)"]
+    New["New Incoming Complaint\n(Lat, Lon, Category, Description, Image)"] --> Trans["Tier 1/2 Cross-Lingual Translation & Normalization\n(Kannada, Kanglish, Hinglish ➔ Standard English)"]
     Trans --> Active["Query Active Tickets in Same Category\n(Registered, Accepted, In Progress, Reopened)"]
-    Active --> Radius["Haversine Proximity Filter\n(Spherical Distance <= 100m)"]
-    Radius -->|Within 100m| BlendSim["Cross-Lingual & Wording Variation Semantic Match\n• 80% Dense Embedding Cosine Similarity (all-MiniLM-L6-v2)\n• 20% Civic Keyword Token Overlap (extract_civic_keywords)\n• Proximity Confidence Bonus (<= 40m)"]
-    Radius -->|Outside 100m| Unique["Mark as Unique Ticket"]
+    Active --> Proximity["Haversine Proximity Filter\n(Spherical Distance <= 100m)"]
+    Proximity --> MultiFactor["Multi-Factor Evidence Evaluation\n• 50% Text Similarity (all-MiniLM-L6-v2 Cosine)\n• 35% Location Proximity (e^(-d/50))\n• 15% Image Similarity (64-bit dHash / YOLO Hazards)"]
     
-    BlendSim --> Check{"Blended Score >= 0.82?"}
-    Check -->|Yes - Duplicate| Merge["Link as Child Duplicate to Parent Ticket\n(Set duplicate_of_complaint_id)\n(Increment Parent impact_count)\n(Re-evaluate & Elevate Parent Priority)"]
-    Check -->|No - Substantially Different| Unique
+    MultiFactor --> ConflictCheck{"Image Matches BUT\nLocation > 150m OR Text Conflicts?"}
+    ConflictCheck -->|Yes - Conflict| ConflictRoute["Route to MANUAL_REVIEW_CONFLICT\n(Decision: MANUAL_REVIEW)\nDO NOT merge, DO NOT mark suspicious"]
+    ConflictCheck -->|No Conflict| ScoreCheck{"Composite Score?"}
+    
+    ScoreCheck -->|Score >= 0.85| Merge["Incident Agreement Confirmed\n• Link to Parent Ticket (duplicate_of_complaint_id)\n• Increment Parent impact_count\n• Re-evaluate & Elevate Parent Priority\n• Preserve All Citizen Data & Photos"]
+    ScoreCheck -->|0.60 <= Score < 0.85| Inconclusive["Route to INCONCLUSIVE_REVIEW\n• Keep as Separate Ticket\n• Flag for Officer Review"]
+    ScoreCheck -->|Score < 0.60| Unique["Mark as Unique Ticket"]
 ```
 
 #### How It Works (Short Description)
-* Eliminates redundant work orders for the same incident (e.g. multiple citizens reporting the same water main burst or road crater) across language boundaries and diverse phrasing variations.
-* **Cross-Lingual & Wording Variation Embedding Match**:
-  1. Translates incoming text in any supported language (pure Kannada script, Romanized Kanglish, Hinglish, or English) to normalized English first.
-  2. Extracts domain civic keywords (`extract_civic_keywords`), stripping stopwords to protect against differing phrasing styles (e.g. *"gundi biddide"* vs *"dangerous crater pothole"*).
-  3. Blends dense SentenceTransformer semantic similarity ($80\%$) with keyword token Jaccard similarity ($20\%$), augmented with a spatial proximity bonus for complaints within 40m.
-* **Spatial & Same-Category Constraint**: Retains the strict requirement that grievances must belong to the same civic category and fall within a 100-meter radius via Haversine distance.
-* **Multimodal Image Mismatch Duplicate Guard**: Computes visual evidence verification *before* duplicate clustering. If an incoming complaint's image is evaluated as a semantic mismatch (`image_semantic_status == "MISMATCH"`, e.g., submitting garbage evidence for a pothole report), the complaint is strictly rejected from linking as a duplicate of any existing ticket, preventing fraudulent or mismatched submissions from co-opting active cases.
-* **Parent Impact & Escalation**: Increments the parent ticket's `impact_count`, displays *"Reported by X people"* across Citizen and Officer dashboards, and automatically elevates the parent ticket's priority and SLA if the aggregated impact count warrants it.
-* **Key Files**: `backend/app/services/duplicate.py`, `backend/app/routers/complaints.py`, `backend/test_kanglish_duplicate.py`, `backend/test_multilingual_duplicate.py`, `backend/test_civic_fixes_verification.py`.
+* Eliminates redundant work orders for the same incident while safeguarding citizen reporting rights and data integrity.
+* **Multi-Factor Composite Scoring Formula**:
+  $$\text{CompositeScore} = 0.50 \cdot \text{Sim}_{\text{text}} + 0.35 \cdot \text{Score}_{\text{location}} + 0.15 \cdot \text{Sim}_{\text{image}}$$
+  1. **Text Similarity (50% weight)**: Translated English SentenceTransformers cosine similarity (`all-MiniLM-L6-v2`) with token overlap fallback.
+  2. **Location Proximity (35% weight)**: Inverse exponential distance score ($e^{-d / 50}$, where $d \le 100\text{m}$) computed via Haversine spherical distance.
+  3. **Image Similarity (15% weight)**: Normalized 64-bit dHash perceptual similarity ($1.0 - \text{HammingDistance}/64$) or detected civic hazard overlap.
+* **Strict Incident Agreement Threshold**: Links a new report to an active parent master ticket only when combined evidence supports the same incident ($\text{CompositeScore} \ge 0.85$ with matching category).
+* **Conflict Routing (`MANUAL_REVIEW_CONFLICT`)**: If an image matches an active complaint (e.g. reused photo or identical hazard) but the location conflicts ($>150\text{m}$) or the description conflicts ($\text{Sim}_{\text{text}} < 0.40$), the system **never auto-merges** and **never marks it suspicious**. Instead, it routes the complaint to `MANUAL_REVIEW_CONFLICT` (decision: `MANUAL_REVIEW`) for an officer or administrator to review.
+* **Inconclusive Review (`INCONCLUSIVE_REVIEW`)**: If the composite score is borderline ($0.60 \le \text{CompositeScore} < 0.85$), the system does not merge. It keeps the complaint as an independent ticket and flags `INCONCLUSIVE_REVIEW` so officers know there may be a nearby related incident.
+* **Data Integrity & Escalation**: Citizen reports and photos are preserved in full. Duplicate linking increments the parent ticket's `impact_count`, displays *"Reported by X people"* on dashboards, and dynamically elevates parent priority and SLA timers.
+* **Key Files**: `backend/app/services/duplicate.py`, `backend/app/routers/complaints.py`, `backend/test_civic_ai_yolo11_validation.py`, `backend/test_kanglish_duplicate.py`, `backend/test_multilingual_duplicate.py`.
 
 ---
 
@@ -597,11 +605,11 @@ flowchart TD
 | **5** | Multimodal Intake | React 19, Leaflet, MediaAPI | Citizen submission | Multi-part form payload, Fast decoupled complaint rendering |
 | **6** | Translation & Clean | Google Translate + Local Multi-Word Fallback | Raw KN/EN/Hinglish | Normalized English, Kanglish vs EN location preservation |
 | **7** | NLP & Priority AI | SentenceTransformers (`all-MiniLM-L6-v2`) | Clean text | Deterministic road/waste routing, 47 Categories, Priority |
-| **8** | YOLOv8 Computer Vision| Ultralytics YOLOv8n, OpenCV | Evidence photo | Detected objects & Quality Diagnostics |
-| **9** | Evidence Trust Scoring | Haversine + EXIF + 4 Hard Gates | GPS, Photo, Text | Composite Trust (0–100%), "Image matches/does not match" badge |
-| **10** | Duplicate AI | Haversine (100m) + Translated Text Embeddings | New complaint | Unique ticket OR Linked duplicate, Image mismatch rejection |
+| **8** | YOLO11 Computer Vision| Ultralytics YOLO11 (`CivicAI_YOLO11n_best.pt`), OpenCV | Evidence photo | 9 Civic Hazards & Quality Diagnostics |
+| **9** | Evidence Trust Scoring | Haversine + EXIF + Two-Sided Validation | GPS, Photo, Text | Composite Trust (0–100%), "Image matches/does not match" badge |
+| **10** | Multi-Factor Duplicate AI | Text (50%) + Proximity (35%) + Image (15%) | New complaint | Linked duplicate, Unique ticket, Conflict/Inconclusive Review |
 | **11** | Smart Agency Routing | Least-Load Balancing | Verified ticket | Dispatched officer & Status update |
-| **12** | Officer Operations | Next.js Dashboard, Bilingual Display | Assigned case | Dual Original/Translated cards, Separated repair images |
+| **12** | Officer Operations | Next.js Dashboard, Resolution Verification | Assigned case | Dual Original/Translated cards, Separated repair images, Verified proof |
 | **13** | Citizen Verification | Next.js Dashboard, Rating | Resolution proof | `Closed` (Rating) OR `Reopened`, Instant UI sync |
 | **14** | SLA Escalation | Periodic Daemon | Active timers | `Normal` &rarr; `Warning` &rarr; `Breached`, SLA duration & Met/Breached status |
 | **15** | GIS Analytics | Leaflet, React, ChartJS | Ticket telemetry | Spatial pins, Hotspot heatmaps |

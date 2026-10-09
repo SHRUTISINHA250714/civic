@@ -8,7 +8,7 @@ import {
   ShieldAlert, LogOut, MapPin, Image as ImageIcon, 
   Loader2, Info, CheckCircle2, Clock, 
   ClipboardCheck, User, Wrench, Calendar, ArrowRight,
-  Users, Volume2
+  Users, Volume2, AlertTriangle
 } from 'lucide-react';
 import { api, tokenStorage } from '@/lib/api';
 import { toast } from 'sonner';
@@ -51,6 +51,44 @@ export default function OfficerDashboard() {
   
   // Action state loader
   const [isTransitioning, setIsTransitioning] = useState(false);
+
+  // Predictive ML risk state for active inspector
+  const [predictionRisk, setPredictionRisk] = useState<any>(null);
+  const [isPredictingRisk, setIsPredictingRisk] = useState(false);
+
+  // Update prediction alert dynamically from existing /predictive/estimate without breaking SLA countdown
+  useEffect(() => {
+    if (!selectedComplaint) {
+      setPredictionRisk(null);
+      return;
+    }
+
+    const isActualBreach = selectedComplaint.sla_summary?.is_breached || selectedComplaint.sla_status === 'Breached';
+    const isResolved = selectedComplaint.status === 'Resolved' || selectedComplaint.status === 'Closed';
+
+    if (!isActualBreach && !isResolved) {
+      let cancelled = false;
+      setIsPredictingRisk(true);
+      api.estimateResolutionRisk({
+        category: selectedComplaint.category_name,
+        ward: selectedComplaint.location_address || "Central",
+        priority: selectedComplaint.priority,
+        department: selectedComplaint.department_name || "BBMP"
+      }).then((pred: any) => {
+        if (!cancelled && pred) {
+          setPredictionRisk(pred);
+        }
+      }).catch((err: any) => {
+        console.warn("Background predictive estimate update skipped:", err);
+      }).finally(() => {
+        if (!cancelled) setIsPredictingRisk(false);
+      });
+
+      return () => { cancelled = true; };
+    } else {
+      setPredictionRisk(null);
+    }
+  }, [selectedComplaint?.id]);
 
   function applyFilter(data: any[], tab: string) {
     if (tab === 'all') {
@@ -276,20 +314,20 @@ export default function OfficerDashboard() {
                   <div className="flex items-center justify-between mb-1.5">
                     <span className="text-[10px] font-bold text-slate-400">ID: #{c.id}</span>
                     <div className="flex items-center gap-1">
-                      {/* SLA urgency badge & Phase 14 enhancements */}
-                      {c.sla_summary?.predictive_early_warning && (
-                        <span className="text-[9px] px-1.5 py-0.5 rounded-full font-bold bg-indigo-100 text-indigo-700 dark:bg-indigo-950/40 dark:text-indigo-300">
-                          ⚡ ML Alert
-                        </span>
-                      )}
-                      {c.sla_status === 'Breached' && (
-                        <span className="text-[9px] px-1.5 py-0.5 rounded-full font-bold bg-red-100 text-red-700 dark:bg-red-950/40 dark:text-red-400">
+                      {/* SLA urgency badge: Clearly distinguish Actual Breach from AI Warning */}
+                      {c.sla_summary?.is_breached || c.sla_status === 'Breached' ? (
+                        <span className="text-[9px] px-1.5 py-0.5 rounded-full font-bold bg-red-100 text-red-700 dark:bg-red-950/40 dark:text-red-400 border border-red-200 dark:border-red-900/40">
                           🚨 {c.sla_summary?.escalation_level ? `L${c.sla_summary.escalation_level} Overdue` : 'SLA Breached'}
                         </span>
-                      )}
-                      {c.sla_status === 'Warning' && (
-                        <span className="text-[9px] px-1.5 py-0.5 rounded-full font-bold bg-amber-100 text-amber-700 dark:bg-amber-950/40 dark:text-amber-400">⚠️ SLA</span>
-                      )}
+                      ) : c.sla_summary?.predictive_early_warning ? (
+                        <span className="text-[9px] px-1.5 py-0.5 rounded-full font-bold bg-purple-100 text-purple-700 dark:bg-purple-950/40 dark:text-purple-300 border border-purple-200 dark:border-purple-800">
+                          ⚡ AI Warning ({Math.round(c.sla_summary.predictive_breach_prob || 0)}%)
+                        </span>
+                      ) : c.sla_status === 'Warning' ? (
+                        <span className="text-[9px] px-1.5 py-0.5 rounded-full font-bold bg-amber-100 text-amber-700 dark:bg-amber-950/40 dark:text-amber-400">
+                          ⚠️ SLA
+                        </span>
+                      ) : null}
                       <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold uppercase ${
                         c.status === 'Resolved' ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950/30 dark:text-emerald-300' :
                         c.status === 'Closed' ? 'bg-slate-100 text-slate-800 dark:bg-slate-800 dark:text-slate-300' :
@@ -338,7 +376,13 @@ export default function OfficerDashboard() {
         <div className="lg:col-span-3 flex flex-col space-y-4">
           <h3 className="font-bold text-lg text-slate-900 dark:text-white">Task Details & Navigation Location</h3>
           
-          {selectedComplaint ? (
+          {selectedComplaint ? (() => {
+            const isActualBreach = selectedComplaint.sla_summary?.is_breached || selectedComplaint.sla_status === 'Breached';
+            const isResolved = selectedComplaint.status === 'Resolved' || selectedComplaint.status === 'Closed';
+            const breachProb = selectedComplaint.sla_summary?.predictive_breach_prob ?? predictionRisk?.sla_breach_probability_pct ?? 0;
+            const isAiPredictedBreach = (!isActualBreach && !isResolved && breachProb >= 60);
+
+            return (
             <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-6 shadow-sm space-y-6 flex-1 flex flex-col">
               <div className="grid md:grid-cols-2 gap-6 shrink-0">
                 {/* Text details column */}
@@ -358,27 +402,110 @@ export default function OfficerDashboard() {
                         }`}>
                           {selectedComplaint.priority} Priority
                         </span>
+
+                        {/* Response SLA Badge */}
+                        <span className={`text-[11px] font-bold px-2 py-0.5 rounded-full flex items-center gap-1 border ${
+                          selectedComplaint.sla_summary?.response_is_breached
+                            ? 'bg-rose-50 text-rose-700 dark:bg-rose-950/30 dark:text-rose-400 border-rose-300'
+                            : selectedComplaint.status !== 'Registered'
+                            ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/30 dark:text-emerald-400 border-emerald-300'
+                            : 'bg-blue-50 text-blue-700 dark:bg-blue-950/30 dark:text-blue-400 border-blue-300'
+                        }`}>
+                          <Clock className="h-3 w-3" />
+                          <span>Response SLA ({selectedComplaint.sla_summary?.response_sla_duration_str || (selectedComplaint.priority === 'Critical' ? '2h' : selectedComplaint.priority === 'High' ? '4h' : selectedComplaint.priority === 'Medium' ? '8h' : '24h')}): {selectedComplaint.sla_summary?.response_time_remaining_str || selectedComplaint.sla_summary?.response_sla_status || 'Pending'}</span>
+                        </span>
+
+                        {/* Resolution SLA Badge */}
                         {selectedComplaint.sla_summary && (
-                          <span className={`text-[11px] font-bold px-2 py-0.5 rounded-full flex items-center gap-1 ${
-                            selectedComplaint.sla_summary.is_breached || selectedComplaint.sla_summary.sla_status === 'Breached'
-                              ? 'bg-rose-100 text-rose-700 dark:bg-rose-950/40 dark:text-rose-400 border border-rose-300'
+                          <span className={`text-[11px] font-bold px-2 py-0.5 rounded-full flex items-center gap-1 border ${
+                            isActualBreach
+                              ? 'bg-rose-100 text-rose-700 dark:bg-rose-950/40 dark:text-rose-400 border-rose-300'
+                              : isResolved
+                              ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-400 border-emerald-300'
                               : selectedComplaint.sla_summary.sla_status === 'Warning'
-                              ? 'bg-amber-100 text-amber-700 dark:bg-amber-950/40 dark:text-amber-400 border border-amber-300'
-                              : 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-400 border border-emerald-300'
+                              ? 'bg-amber-100 text-amber-700 dark:bg-amber-950/40 dark:text-amber-400 border-amber-300'
+                              : 'bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300 border-slate-300 dark:border-slate-700'
                           }`}>
                             <Clock className="h-3 w-3" />
-                            {selectedComplaint.sla_summary.is_breached || selectedComplaint.sla_summary.sla_status === 'Breached'
-                              ? '🚨 SLA Breached'
-                              : selectedComplaint.status === 'Resolved' || selectedComplaint.status === 'Closed'
-                              ? selectedComplaint.sla_summary.resolution_sla_status || 'Resolved within SLA'
-                              : selectedComplaint.sla_summary.time_remaining_str || 'On Track'}
-                            {selectedComplaint.sla_summary.sla_duration_str && ` (${selectedComplaint.sla_summary.sla_duration_str} SLA)`}
+                            <span>Resolution SLA ({selectedComplaint.sla_summary.sla_duration_str || (selectedComplaint.priority === 'Critical' ? '24h' : selectedComplaint.priority === 'High' ? '48h' : selectedComplaint.priority === 'Medium' ? '72h' : '120h')}):{' '}
+                              {isActualBreach
+                                ? '🚨 SLA Breached'
+                                : isResolved
+                                ? selectedComplaint.sla_summary.resolution_sla_status || 'Resolved within SLA'
+                                : selectedComplaint.sla_summary.time_remaining_str || 'On Track'}
+                            </span>
                           </span>
                         )}
                       </div>
                     </div>
                     <span className="text-[10px] font-mono bg-slate-100 dark:bg-slate-800 px-2 py-0.5 rounded uppercase font-bold text-slate-500">ID: #{selectedComplaint.id}</span>
                   </div>
+
+                  {/* ── 1. ACTUAL SLA BREACH BANNER: Strictly only when actual resolution deadline passed ── */}
+                  {isActualBreach && !isResolved && (
+                    <div className="p-3.5 bg-rose-50 dark:bg-rose-950/30 border-2 border-rose-500/80 rounded-xl space-y-2 shadow-sm animate-fade-in">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-2">
+                          <span className="bg-rose-600 text-white text-[10px] font-black px-2 py-0.5 rounded tracking-wide uppercase">
+                            🚨 SLA Breached
+                          </span>
+                          <span className="text-xs font-bold text-rose-900 dark:text-rose-200">
+                            Resolution SLA Deadline Has Expired
+                          </span>
+                        </div>
+                        {selectedComplaint.sla_summary?.hours_overdue && (
+                          <span className="text-[10px] font-mono font-bold text-rose-700 dark:text-rose-300 bg-rose-100 dark:bg-rose-900/60 px-2 py-0.5 rounded">
+                            +{selectedComplaint.sla_summary.hours_overdue}h overdue
+                          </span>
+                        )}
+                      </div>
+                      {/* Display escalation level strictly only after actual breach */}
+                      {selectedComplaint.sla_summary?.escalation_level && (
+                        <div className="pt-2 border-t border-rose-200 dark:border-rose-900/60 flex items-center justify-between text-xs text-rose-900 dark:text-rose-200">
+                          <span className="font-bold flex items-center gap-1.5">
+                            <ShieldAlert className="h-4 w-4 text-rose-600" />
+                            Escalation Level: <strong>Level {selectedComplaint.sla_summary.escalation_level}</strong>
+                          </span>
+                          <span className="text-[11px] font-medium italic">
+                            {selectedComplaint.sla_summary.escalation_stage}
+                          </span>
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {/* ── 2. AI WARNING BANNER: Before deadline when Random Forest breach probability >= 60% ── */}
+                  {!isActualBreach && !isResolved && isAiPredictedBreach && (
+                    <div className="p-3.5 bg-gradient-to-r from-amber-50 to-orange-50 dark:from-amber-950/30 dark:to-orange-950/30 border-2 border-amber-400 dark:border-amber-700 rounded-xl space-y-2 shadow-sm animate-fade-in">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-2">
+                          <span className="bg-amber-500 text-slate-950 text-[10px] font-black px-2 py-0.5 rounded tracking-wide uppercase flex items-center gap-1 shadow-sm">
+                            <AlertTriangle className="h-3 w-3 text-slate-950" />
+                            AI Warning
+                          </span>
+                          <span className="text-xs font-extrabold text-amber-950 dark:text-amber-100">
+                            AI Warning: {Math.round(breachProb)}% probability of SLA breach
+                          </span>
+                        </div>
+                        <span className="text-[10px] font-semibold text-amber-800 dark:text-amber-300 bg-amber-100 dark:bg-amber-900/50 px-2 py-0.5 rounded">
+                          Random Forest Prediction (Before Deadline)
+                        </span>
+                      </div>
+                      <div className="flex items-center justify-between bg-white/80 dark:bg-slate-900/80 p-2.5 rounded-lg border border-amber-200 dark:border-amber-900/60 text-xs">
+                        <span className="text-slate-600 dark:text-slate-300 font-medium">
+                          Recommended Action:
+                        </span>
+                        <span className="font-extrabold text-amber-900 dark:text-amber-200 flex items-center gap-1">
+                          👉 Prioritize this complaint.
+                        </span>
+                      </div>
+                      <div className="text-[10px] text-amber-800/80 dark:text-amber-400 font-medium flex items-center justify-between">
+                        <span>Resolution SLA is still on track ({selectedComplaint.sla_summary?.time_remaining_str || 'Active countdown'}).</span>
+                        {isPredictingRisk && <span className="text-[9px] text-amber-600 italic">Refreshing AI risk...</span>}
+                      </div>
+                    </div>
+                  )}
+
                   <div>
                     <span className="text-[10px] font-bold text-slate-400 block uppercase">Location Address & Context</span>
                     <span className="text-xs text-slate-800 dark:text-slate-200 font-bold block mt-0.5 flex items-center gap-1">
@@ -595,7 +722,8 @@ export default function OfficerDashboard() {
                 </div>
               </div>
             </div>
-          ) : (
+            );
+          })() : (
             <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-12 rounded-xl flex-1 flex flex-col items-center justify-center text-slate-400 shadow-sm">
               <ClipboardCheck className="h-14 w-14 text-slate-350 dark:text-slate-700 mb-3" />
               <p className="text-sm font-semibold">Select a complaint from the queue list to inspect details.</p>

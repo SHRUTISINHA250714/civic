@@ -34,13 +34,40 @@ except Exception as e:
     encoder_model = None
 
 print("Initializing AI YOLO Model...")
+yolo_model = None
 try:
-    # Lightweight COCO model, downloads automatically if not cached (~12MB)
-    yolo_model = YOLO("yolov8n.pt")
-    print("YOLO model loaded.")
+    model_name = getattr(settings, "YOLO_MODEL", "CivicAI_YOLO11n_best.pt") or "CivicAI_YOLO11n_best.pt"
+    # Resolve file location across backend/root/relative paths
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+    possible_paths = [
+        model_name,
+        os.path.join(base_dir, "..", "..", model_name),
+        os.path.join(base_dir, "..", "..", "..", model_name),
+        os.path.join(base_dir, "..", "..", "CivicAI_YOLO11n_best.pt"),
+        os.path.join(base_dir, "..", "..", "..", "CivicAI_YOLO11n_best.pt"),
+        os.path.join("backend", "CivicAI_YOLO11n_best.pt"),
+        "CivicAI_YOLO11n_best.pt",
+        "yolov8n.pt",
+    ]
+    resolved_model_path = None
+    for p in possible_paths:
+        if os.path.exists(p):
+            resolved_model_path = p
+            break
+
+    if not resolved_model_path:
+        resolved_model_path = model_name
+
+    yolo_model = YOLO(resolved_model_path)
+    print(f"YOLO model loaded successfully from: {resolved_model_path}")
 except Exception as e:
-    print("Failed to load YOLO:", e)
-    yolo_model = None
+    print(f"Failed to load primary YOLO model ({e}). Attempting fallback to yolov8n.pt...")
+    try:
+        yolo_model = YOLO("yolov8n.pt")
+        print("Fallback YOLO (yolov8n.pt) loaded.")
+    except Exception as e2:
+        print("Fallback YOLO also failed:", e2)
+        yolo_model = None
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Master Taxonomy & Authority Metadata for the 4 Karnataka Civic Authorities:
@@ -1300,6 +1327,12 @@ def verify_image(image_path: str, category_name: str) -> Tuple[bool, float]:
                 
         print(f"YOLO detected objects in image: {detected_objects}")
         
+        # Civic hazard objects from CivicAI_YOLO11n_best.pt
+        civic_hazards = {
+            "pothole", "garbage", "fallen_tree", "streetlight", "water_leak", 
+            "road_crack", "damaged_road_sign", "graffiti", "damaged_electrical_pole"
+        }
+
         # Define street/outdoor objects that validate municipal complaints
         outdoor_indicators = {
             "car", "truck", "bus", "motorcycle", "bicycle", "person", "dog", "cat", 
@@ -1307,6 +1340,7 @@ def verify_image(image_path: str, category_name: str) -> Tuple[bool, float]:
         }
         
         # Verify based on detected objects
+        matching_hazards = [obj for obj in detected_objects if obj in civic_hazards]
         matching_indicators = [obj for obj in detected_objects if obj in outdoor_indicators]
         
         # Heuristics:
@@ -1314,14 +1348,16 @@ def verify_image(image_path: str, category_name: str) -> Tuple[bool, float]:
         indoor_indicators = {"tv", "laptop", "mouse", "keyboard", "cell phone", "sofa", "bed", "refrigerator"}
         is_indoor_device = any(obj in detected_objects for obj in indoor_indicators)
         
-        # Verified if outdoor elements present, and not an indoor screenshot/device photo
-        if len(matching_indicators) > 0 and not is_indoor_device:
-            # Verified
+        # Verified if civic hazards or outdoor elements present, and not an indoor screenshot/device photo
+        if len(matching_hazards) > 0 and not is_indoor_device:
+            confidence = min(0.99, 0.85 + (0.04 * len(matching_hazards)))
+            return True, confidence
+        elif len(matching_indicators) > 0 and not is_indoor_device:
+            # Verified via outdoor context
             confidence = min(0.99, 0.70 + (0.05 * len(detected_objects)))
             return True, confidence
         elif len(detected_objects) == 0:
-            # No objects detected at all (e.g. close-up of a road hole or garbage pile)
-            # This is normal for close-up complaint shots, so we verify but with moderate confidence
+            # No objects detected at all (e.g. close-up of a road hole or surface)
             return True, 0.65
         elif is_indoor_device:
             # Device screen / indoor shot

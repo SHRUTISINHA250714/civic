@@ -26,10 +26,10 @@ The platform empowers citizens to report civic grievances using **multilingual n
 ### 🎯 Key Goals & Innovations
 * **Multimodal Citizen Intake**: Text in Kannada/English/Hinglish, voice-to-text recording, live device geolocation, and mandatory photo capture with decoupled, high-performance rendering.
 * **Zero-Drop Translation & Preprocessing**: Automatically normalizes Kannada/Hinglish input to standard English for NLP classification while preserving the citizen's original statement and audio recordings. Features strict word-boundary checks protecting genuine English text with Indian location names from corruption.
-* **Explainable Multimodal Evidence Trust Scoring (0–100%)**: Cross-evaluates live device GPS against EXIF photo metadata, checks upload timestamp plausibility, and validates whether YOLOv8 computer vision detected objects match the reported category with explicit *"Image matches complaint"* vs *"Image does not match complaint"* status badges.
-* **Spatial & Semantic Duplicate Detection with Image Mismatch Guard**: Prevents ticket flooding by merging new complaints within a 100m radius and high semantic cosine similarity into active master cases, with a hard multimodal filter rejecting complaints with mismatched evidence from duplicate linking.
+* **Explainable Multimodal Evidence Trust Scoring (0–100%)**: Cross-evaluates live device GPS against EXIF photo metadata, checks upload timestamp plausibility, and validates whether computer vision detected civic hazards match reported categories via custom-trained `CivicAI_YOLO11n_best.pt`. Features two-sided image-text validation across citizen submissions and officer resolution proofs, displaying explicit *"Image matches complaint"* vs *"Image does not match complaint"* status badges.
+* **Multi-Factor Duplicate Detection with Conflict Guard**: Evaluates text similarity (50%), location proximity (35%), and image similarity (15%) within a 100m radius. Merges new complaints into active master cases only when combined evidence supports the same incident. Conflicting evidence (e.g. matching image but location $>150\text{m}$ or conflicting text) routes to `MANUAL_REVIEW_CONFLICT` without auto-merging or false fraud flags. Borderline cases route to `INCONCLUSIVE_REVIEW` as separate tickets while preserving all citizen data and photos.
 * **Deterministic Karnataka Agency Smart Routing**: Deterministically routes grievances to responsible state authorities (potholes and road damage to BBMP, garbage and litter to BSWML, water and drainage to BWSSB, power hazards to BESCOM) and assigns them to on-duty officers based on least active load.
-* **Officer Workflow & Proof of Resolution**: Field officers view dual clearly-labeled sections (*"Original Complaint"* and *"English Translation"*), inspect separate Citizen Evidence vs Officer Repair Verification images, and must upload after-fix photographic proof with detailed remediation logs to mark tickets resolved.
+* **Officer Workflow & Proof of Resolution**: Field officers view dual clearly-labeled sections (*"Original Complaint"* and *"English Translation"*), inspect separate Citizen Evidence vs Officer Repair Verification images, and must upload after-fix photographic proof with detailed remediation logs validated by `verify_resolution_evidence` to mark tickets resolved.
 * **Citizen Verification & Reopen Loop**: The citizen retains the final authority to approve resolution (closing the case with a 1–5 star rating) or reject it (reopening the case with feedback), with immediate UI state synchronization hiding the verification prompt once completed.
 * **Automated SLA Policies, Duration Tracking & Escalations**: Dynamic countdown timers displaying exact SLA duration, live time remaining, breach warning pills, and resolution SLA compliance tracking (*"Met SLA"* vs *"Breached SLA"*).
 * **Frictionless Authentication & Session Resilience**: Interactive password visibility toggles (`Eye`/`EyeOff`) and dual-storage session persistence (`tokenStorage.ensureSession`) preventing logout drops on page refreshes.
@@ -56,19 +56,22 @@ The platform empowers citizens to report civic grievances using **multilingual n
    AI INTELLIGENCE SUITE
   • SentenceTransformers (Semantic Classification - 20 Classes)
   • Priority Prediction Engine (Critical, High, Medium, Low)
-  • YOLOv8 Computer Vision (Potholes, Garbage, Streetlights, Hazards)
+  • Ultralytics YOLO11 (CivicAI_YOLO11n_best.pt - 9 Civic Classes)
              │
              ▼
    MULTIMODAL EVIDENCE TRUST ENGINE
-  • Live GPS vs. Photo EXIF GPS Delta (<500m verification)
-  • Timestamp Sanity & Recency Check
-  • Vision Object vs. Text Category Agreement Scoring
+  • Live GPS vs. Photo EXIF GPS Delta (<500m match, >5km suspicious)
+  • Timestamp Sanity & Recency Check (Fresh <=72h, Stale/Future -> Review)
+  • Two-Sided Image-Text Validation (Citizen Submission & Officer Resolution)
+  • Decoupled Fraud Guard (Reused Image -> Review, Spoofed GPS -> Suspicious)
              │
              ▼
-   DUPLICATE & INCIDENT DETECTION
-  • Haversine Spatial Filter (Radius <= 100m)
-  • Semantic Embedding Cosine Similarity (Score >= 0.85)
-  • Clustered Master Issue Association
+   MULTI-FACTOR DUPLICATE & INCIDENT DETECTION
+  • Multi-Factor Composite Score: Text (50%) + Proximity (35%) + Image (15%)
+  • Incident Agreement Threshold (Score >= 0.85 -> Link to Parent & Elevate SLA)
+  • Conflict Routing (Matching Image + Conflicting Geo/Text -> MANUAL_REVIEW_CONFLICT)
+  • Inconclusive Routing (0.60 <= Score < 0.85 -> INCONCLUSIVE_REVIEW Separate Ticket)
+  • Complete Citizen Data & Photo Evidence Preservation
              │
              ▼
    KARNATAKA SMART ROUTING ENGINE
@@ -81,6 +84,7 @@ The platform empowers citizens to report civic grievances using **multilingual n
   • Status: Registered ➔ Accepted ➔ In Progress
   • Remediation Field Work & On-Site Action
   • Mandatory After-Resolution Proof Photo & Remediation Notes
+  • Automated Resolution Evidence Verification (verify_resolution_evidence)
              │
              ▼
    CITIZEN CLOSURE & VERIFICATION LOOP
@@ -117,7 +121,7 @@ The platform empowers citizens to report civic grievances using **multilingual n
 | **Authentication & Security** | **JWT (JSON Web Tokens) + Bcrypt** | Role-Based Access Control (`Citizen`, `Officer`, `Admin`) with encrypted password hashing. |
 | **Natural Language Processing** | **PyTorch + HuggingFace SentenceTransformers (`all-MiniLM-L6-v2`)** | 384-dimensional dense semantic text embeddings for classification and duplicate search. |
 | **Multilingual Engine** | **2-Tier Translation Pipeline (Google Translate + Kanglish Guard + Longest-Match Local Dictionary)** | High-precision language detection, Kanglish/Hinglish bypass prevention, and multi-word phrase fallback normalizer. |
-| **Computer Vision** | **Ultralytics YOLOv8 (`yolov8n.pt`) + OpenCV + Pillow** | Real-time object detection identifying municipal hazards (potholes, garbage, wires) + Laplacian variance blur & exposure diagnostics. |
+| **Computer Vision** | **Ultralytics YOLO11 (`CivicAI_YOLO11n_best.pt`) + OpenCV + Pillow** | Custom municipal hazard detection (potholes, garbage, fallen trees, streetlights, water leaks, road cracks, signs, graffiti, poles) + Laplacian variance blur & exposure diagnostics. |
 | **Machine Learning Engine** | **Scikit-Learn (RandomForest) + Joblib + NumPy + Pandas** | Predictive intelligence, SLA breach classification (84.4% acc, 0.922 AUC), duration regression, and spatial forecasting. |
 | **Server & Deployment** | **Uvicorn ASGI Server + Node.js Engine** | Production-grade server environment with asynchronous request handling. |
 
@@ -136,7 +140,7 @@ The platform empowers citizens to report civic grievances using **multilingual n
  │ Phase 5: Multimodal Complaint Collection    Phase 14: SLA Escalation   │
  │ Phase 6: Preprocessing & Translation        Phase 15: GIS Analytics    │
  │ Phase 7: AI Classification & Priority       Phase 16: Predictive ML    │
- │ Phase 8: YOLOv8 Computer Vision             Phase 17: E2E Verification │
+ │ Phase 8: YOLO11 Civic Computer Vision       Phase 17: E2E Verification │
  │ Phase 9: Multimodal Evidence Trust                                     │
  └────────────────────────────────────────────────────────────────────────┘
 ```
@@ -193,12 +197,19 @@ The platform empowers citizens to report civic grievances using **multilingual n
   4. **Streetlights vs. Grid**: Municipal streetlighting faults route to BBMP, whereas transformer sparking, high-voltage wires, and grid outages route to BESCOM.
 * **Priority Engine**: Evaluates safety keywords ("accident", "spark", "flood", "danger", "hazard", "injury") combined with category severity weights to output priority (`Critical`, `High`, `Medium`, `Low`) and a confidence score (0.0–1.0).
 
-### Phase 8 — Structured Computer Vision & Image Quality Validation (YOLOv8 & OpenCV)
-* **Core Deliverable**: `backend/app/services/evidence.py` executes structured image analysis and quality diagnostics.
-* **Ultralytics YOLOv8n**: Identifies civic hazard objects, outputting structured payloads:
-  - `detected_objects`: Categorized COCO & civic infrastructure labels
-  - `bounding_boxes`: Label, confidence score, and `[x1, y1, x2, y2]` bounding coordinates
-  - `confidence_scores`: Highest confidence per detected object class
+### Phase 8 — Structured Computer Vision & Image Quality Validation (YOLO11 & OpenCV)
+* **Core Deliverable**: `backend/app/services/evidence.py` and `backend/app/services/ai.py` execute structured image analysis and quality diagnostics using the dedicated municipal model `CivicAI_YOLO11n_best.pt`.
+* **CivicAI YOLO11n Neural Network**: Replaced generic COCO detection with a custom municipal model identifying 9 municipal classes:
+  1. `pothole`: Road craters, surface breaches, asphalt collapse
+  2. `garbage`: Roadside trash dumps, overflowing bins, uncollected waste
+  3. `fallen_tree`: Fallen trees, blocked roadways from storm branches
+  4. `streetlight`: Streetlight poles, dark fixtures, municipal luminaires
+  5. `water_leak`: Burst mains, surface water flooding, puddle streams
+  6. `road_crack`: Structural pavement fissures, alligator cracking
+  7. `damaged_road_sign`: Bent/broken regulatory or navigational signs
+  8. `graffiti`: Defacement, unauthorized street tagging
+  9. `damaged_electrical_pole`: Tilted power poles, cracked utility supports
+* **Direct Civic Hazard Semantic Mapping**: Directly maps municipal complaint categories to model-detected hazards (e.g. "potholes" matches `pothole` and `road_crack`; "water leak" matches `water_leak`), eliminating brittle heuristics.
 * **OpenCV Preprocessing & Quality Diagnostics**:
   - Blurriness detection via Laplacian variance ($\text{var} < 25.0 \implies \text{BLURRY}$)
   - Exposure diagnostics (underexposed mean brightness $< 25$ or overexposed $> 245$)
@@ -213,8 +224,8 @@ The platform empowers citizens to report civic grievances using **multilingual n
 * **The 4 Hard Verification Gates**:
   1. **Gate 1: Live GPS vs EXIF Cross-Validation**: Haversine distance threshold ($\le 500\text{m} \implies \text{MATCH}$, $\ge 5000\text{m} \implies \text{SUSPICIOUS}$). Handles missing EXIF as `EXIF_MISSING`. Incorporates browser `gps_accuracy`.
   2. **Gate 2: Timestamp Freshness**: Rejects future timestamps ($> 10\text{m} \implies \text{FUTURE} \to \text{MANUAL\_REVIEW}$) and flags stale evidence ($> 72\text{h} \implies \text{STALE} \to \text{MANUAL\_REVIEW}$).
-  3. **Gate 3: Semantic Complaint $\leftrightarrow$ Image Matching**: Cross-evaluates complaint text/category against image content using SentenceTransformers `all-MiniLM-L6-v2` and YOLO object categories. Strict negative filters detect cross-category mismatches (e.g., streetlight or pothole complaint with garbage photo, or road complaint with indoor furniture). *Semantic mismatches are strictly barred from being VERIFIED*.
-  4. **Gate 4: Reused Image Detection (Perceptual Hashing)**: Generates 64-bit difference hashes (`dHash`). Hamming distance $\le 4$ detects recycled photos across complaints, flagging `is_reused_image = True` $\to$ `SUSPICIOUS`.
+  3. **Gate 3: Two-Sided Image–Text Validation**: Cross-evaluates images against text and category on both citizen submission and officer resolution (`verify_resolution_evidence`). Uses `CivicAI_YOLO11n_best.pt` detections and SentenceTransformers `all-MiniLM-L6-v2`. Mismatches flag for manual review (`MANUAL_REVIEW`, `is_verified = False`), strictly preventing invalid evidence from ever being accepted as verified. Blatant cross-category conflicts (e.g. streetlight complaint with garbage photo) route to `REJECTED`.
+  4. **Gate 4: Reused Image Detection (Perceptual Hashing) & Decoupled Fraud Guard**: Generates 64-bit difference hashes (`dHash`). Hamming distance $\le 4$ detects recycled photos across complaints, setting `is_reused_image = True` $\to$ `MANUAL_REVIEW`. Reused images alone no longer mark complaints as `SUSPICIOUS`; `SUSPICIOUS` is decoupled and strictly reserved for severe GPS anomalies ($> 5\text{km}$).
 * **Standardized Image Verification Result**: Computes a clear user-facing `image_verification_result` string exposed across Citizen and Officer dashboards:
   - `"Image matches complaint"` for confirmed semantic alignment (`MATCH`).
   - `"Image does not match complaint"` for cross-category mismatches (`MISMATCH`).
@@ -223,15 +234,17 @@ The platform empowers citizens to report civic grievances using **multilingual n
 * **Composite Trust Score (0–100%)**: Weighted composition: GPS ($35\%$), Timestamp ($20\%$), Semantic Vision ($45\%$), clamped to $\le 24\%$ on `REJECTED` and $\le 35\%$ on `SUSPICIOUS`.
 * **Audit Endpoint**: `GET /api/v1/complaints/{id}/evidence` exposes the full verification payload to officers and citizens.
 
-### Phase 10 — Duplicate & Incident Intelligence with Image Mismatch Guard
-* **Core Deliverable**: `backend/app/services/duplicate.py` stops redundant ticketing and detects localized clusters.
-* **Translated English Embedding Guarantee**: Generates embeddings strictly from translated English descriptions (`candidate.description` / `candidate.translated_text`), preventing duplicate detection failures across Kannada, Kanglish, Hinglish, and English submissions.
-* **Multimodal Image Mismatch Duplicate Guard**: Visual evidence analysis executes *prior* to duplicate evaluation. If an incoming complaint's image is evaluated as a semantic mismatch (`image_semantic_status == "MISMATCH"`, e.g. garbage photo uploaded for a pothole ticket), it is strictly barred from linking as a duplicate of any existing ticket.
-* **Clustering Algorithm**:
-  1. Filters active complaints within **Haversine Distance $\le 100\text{m}$**.
-  2. Same category constraint.
-  3. Computes SentenceTransformer cosine similarity between translated complaint descriptions.
-  4. If combined similarity score $\ge 0.85$ and image semantic status $\neq \text{MISMATCH}$, marks new complaint as duplicate (`duplicate_of_complaint_id`), increments parent `impact_count`, and auto-joins citizen to the parent ticket.
+### Phase 10 — Multi-Factor Duplicate & Incident Intelligence Engine
+* **Core Deliverable**: `backend/app/services/duplicate.py` stops redundant work orders while maintaining data integrity.
+* **Multi-Factor Composite Scoring Formula**:
+  $$\text{CompositeScore} = 0.50 \cdot \text{Sim}_{\text{text}} + 0.35 \cdot \text{Score}_{\text{location}} + 0.15 \cdot \text{Sim}_{\text{image}}$$
+  - **Text Similarity (50% weight)**: SentenceTransformers cosine similarity evaluated strictly on translated English text (`all-MiniLM-L6-v2`) with token overlap fallback.
+  - **Location Proximity (35% weight)**: Inverse exponential distance score ($e^{-d / 50}$, where $d \le 100\text{m}$) computed via Haversine spherical distance.
+  - **Image Similarity (15% weight)**: Normalized 64-bit dHash perceptual similarity ($1.0 - \text{HammingDistance}/64$) or detected civic hazard overlap.
+* **Incident Agreement Threshold**: Combined score $\ge 0.85$ within the same category links the new report to the parent master ticket (`duplicate_of_complaint_id`).
+* **Conflict Routing (`MANUAL_REVIEW_CONFLICT`)**: If image matches an active complaint (reused photo or matching hazard), but the location conflicts ($> 150\text{m}$) or the text description conflicts (similarity $< 0.40$), the system **never auto-merges** and **never marks it suspicious**. Instead, it routes the complaint to `MANUAL_REVIEW_CONFLICT` (decision: `MANUAL_REVIEW`) for manual officer audit.
+* **Inconclusive Review (`INCONCLUSIVE_REVIEW`)**: If the composite score is borderline ($0.60 \le \text{CompositeScore} < 0.85$), the system does not merge. It keeps the complaint as an independent ticket and flags `INCONCLUSIVE_REVIEW`.
+* **Data Integrity & Multi-Reporter Escalation**: Citizen complaints, photos, and timestamps are never overwritten or deleted. Linking increments parent `impact_count` and triggers dynamic priority and SLA reassessment (e.g. Medium $\to$ High).
 
 ### Phase 11 — Karnataka Smart Routing Engine
 * **Core Deliverable**: `backend/app/services/routing.py` automates officer assignment without manual dispatch bottlenecks.
@@ -253,6 +266,7 @@ The platform empowers citizens to report civic grievances using **multilingual n
 * **Mandatory Resolution Validation Gate**:
   - **Mandatory After-Resolution Photo Proof**: Image upload is compulsory. Validates format (`.jpg`, `.jpeg`, `.png`, `.webp`), minimum size ($\ge 2\text{KB}$), image integrity (Pillow verification), and minimum dimensions ($\ge 50\times 50\text{px}$).
   - **Mandatory Descriptive Remediation Notes**: Explanation of actual action taken is compulsory ($\ge 15$ characters). Strictly rejects empty notes, short phrases, and meaningless placeholders (`"done"`, `"fixed"`, `"resolved"`, `"ok"`, `"test"`, `"action taken"`).
+  - **Automated Resolution Evidence Verification**: `verify_resolution_evidence(complaint, resolution_remarks, file_bytes)` evaluates resolution photos against resolution remarks and complaint category using `CivicAI_YOLO11n_best.pt` and OpenCV diagnostics. Mismatched or low-quality repair photos flag `MANUAL_REVIEW` and set `is_verified = False` in the audit record, preventing invalid evidence from being accepted as verified.
 
 ### Phase 13 — Citizen Verification & Reopen Feedback Loop
 * **Core Deliverable**: Gives citizens democratic oversight over resolution validity.
@@ -356,8 +370,8 @@ erDiagram
 (Kannada / English)          (Visual Evidence)              (Live Device GPS)
       │                              │                              │
       ▼                              ▼                              ▼
-Translation / Normalization    YOLOv8 Object Detection        EXIF GPS Extraction
-(Google / Indic Pipeline)    (Pothole, Waste, Hazards)      (Metadata Analysis)
+Translation / Normalization    YOLO11 Object Detection        EXIF GPS Extraction
+(Google / Indic Pipeline)    (CivicAI_YOLO11n_best.pt)      (Metadata Analysis)
       │                              │                              │
       ▼                              │                              ▼
 SentenceTransformers                 │                     Haversine Distance Delta
@@ -398,6 +412,10 @@ $$\text{TrustScore} = w_{\text{gps}} \cdot S_{\text{gps}} + w_{\text{time}} \cdo
 
 #### 3. Semantic Cosine Similarity
 $$\text{Sim}(u, v) = \frac{\mathbf{u} \cdot \mathbf{v}}{\|\mathbf{u}\|_2 \|\mathbf{v}\|_2}$$
+
+#### 4. Multi-Factor Duplicate Composite Score
+$$\text{DuplicateScore} = 0.50 \cdot \text{Sim}_{\text{text}} + 0.35 \cdot S_{\text{location}} + 0.15 \cdot \text{Sim}_{\text{image}}$$
+*Where $S_{\text{location}} = \exp\left(-\frac{d}{50}\right)$ for $d \le 100\text{m}$, and $\text{Sim}_{\text{image}} = 1.0 - \frac{\text{HammingDistance}(h_1, h_2)}{64}$. Incident merge requires $\text{DuplicateScore} \ge 0.85$ and matching category. Conflicting location ($>150\text{m}$) or conflicting text ($\text{Sim}_{\text{text}} < 0.40$) routes to `MANUAL_REVIEW_CONFLICT`.*
 
 ---
 
@@ -517,7 +535,7 @@ SECRET_KEY=karnataka_civic_grievance_management_ai_secret_key_2026
 
 # AI Models
 SENTENCE_TRANSFORMER_MODEL=all-MiniLM-L6-v2
-YOLO_MODEL=yolov8n.pt
+YOLO_MODEL=CivicAI_YOLO11n_best.pt
 ```
 
 ### 2. Backend Setup
@@ -558,23 +576,26 @@ npm run dev
 # 1. Neon Cloud Serverless Database Connectivity & Health
 python backend/test_neon_connection.py
 
-# 2. Hard-Gate Evidence Verification Test Suite (11 Scenarios)
+# 2. CivicAI YOLO11n & Multi-Factor Verification Test Suite (5 Scenarios)
+python backend/test_civic_ai_yolo11_validation.py
+
+# 3. Hard-Gate Evidence Verification Test Suite (11 Scenarios)
 python -m backend.test_evidence_gates
 
-# 3. Multilingual & Kanglish Duplicate Detection Tests
+# 4. Multilingual & Kanglish Duplicate Detection Tests
 python backend/test_kanglish_duplicate.py
 python backend/test_multilingual_duplicate.py
 
-# 4. Multi-Word Kannada Phrase Translation Fallback Test
+# 5. Multi-Word Kannada Phrase Translation Fallback Test
 python backend/test_multiword_phrase_translation.py
 
-# 5. Field Officer Translated-Only Text Verification Test
+# 6. Field Officer Translated-Only Text Verification Test
 python backend/test_officer_translated_only.py
 
-# 6. Complete End-to-End 17-Phase Test Suite
+# 7. Complete End-to-End 17-Phase Test Suite
 python backend/test_e2e.py
 
-# 7. 11-Fix Comprehensive Verification Suite
+# 8. 11-Fix Comprehensive Verification Suite
 python backend/test_civic_fixes_verification.py
 ```
 
@@ -656,6 +677,23 @@ python backend/test_civic_fixes_verification.py
 18. **Citizen Resolution Verification UI Synchronization**:
     - In `frontend/src/app/citizen/dashboard/page.tsx`, submitting resolution verification (approve or reject) immediately updates local component state without requiring a page reload.
     - Automatically hides the "Verify Resolution" action button once completed (`citizen_verified == true`), displaying permanent feedback confirmation and preventing duplicate actions.
+
+### CivicAI YOLO11n Integration & Multi-Factor Verification
+19. **CivicAI YOLO11n Model Integration (`CivicAI_YOLO11n_best.pt`)**:
+    - Upgraded from generic COCO model to custom municipal model trained on 9 civic hazard classes (`pothole`, `garbage`, `fallen_tree`, `streetlight`, `water_leak`, `road_crack`, `damaged_road_sign`, `graffiti`, `damaged_electrical_pole`).
+    - Integrated direct semantic matching connecting municipal complaint categories directly to detected civic hazards without brittle keyword mappings.
+20. **Two-Sided Image–Text Validation**:
+    - On citizen submission: cross-evaluates uploaded image against complaint description and category; mismatches are flagged for `MANUAL_REVIEW` and invalid evidence is strictly barred from being accepted as verified (`is_verified = False`).
+    - On officer resolution: implemented `verify_resolution_evidence(complaint, resolution_remarks, file_bytes)` in `backend/app/services/evidence.py` and connected to `POST /api/v1/complaints/{id}/resolve`. Mismatched or low-quality repair photos flag `MANUAL_REVIEW`, tagging `is_verified = False` in audit history.
+21. **Multi-Factor Duplicate Detection Composite Engine**:
+    - Replaced single-factor text check with composite score: Text Similarity ($50\%$) + Location Proximity ($35\%$) + Image Similarity ($15\%$).
+    - Links new complaint to parent master incident only when combined evidence supports the same incident ($\text{score} \ge 0.85$ and matching category).
+22. **Duplicate Conflict Guard & Inconclusive Routing**:
+    - When image matches an active complaint but location conflicts ($>150\text{m}$) or description conflicts ($\text{sim} < 0.40$), the system avoids both auto-merging and false fraud accusations by routing to `MANUAL_REVIEW_CONFLICT` (decision: `MANUAL_REVIEW`).
+    - Borderline scores ($0.60 \le \text{score} < 0.85$) route to `INCONCLUSIVE_REVIEW` as separate independent tickets.
+23. **Citizen Data Preservation & Decoupled Fraud Detection**:
+    - Full citizen complaints, images, and submission timestamps are preserved without data loss. Duplicate linking increments parent's `impact_count` and triggers dynamic priority/SLA escalation.
+    - Decoupled reused image detection (routes to `MANUAL_REVIEW`) from malicious fraud tagging (`SUSPICIOUS`, strictly reserved for severe GPS spoofing $>5\text{km}$).
 
 ---
 

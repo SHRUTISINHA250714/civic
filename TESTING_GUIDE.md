@@ -14,7 +14,8 @@
 8. [Test Track 6: Automated End-to-End Terminal Suite](#8-test-track-6-automated-end-to-end-terminal-suite)
 9. [Test Track 7: Interactive Swagger REST API Testing](#9-test-track-7-interactive-swagger-rest-api-testing)
 10. [Test Track 8: Automated Hard-Gate Evidence Verification Suite](#10-test-track-8-automated-hard-gate-evidence-verification-suite)
-11. [Edge Cases & Security Validation](#11-edge-cases--security-validation)
+11. [Test Track 9: CivicAI YOLO11n & Multi-Factor Verification Suite](#11-test-track-9-civicai-yolo11n--multi-factor-verification-suite)
+12. [Edge Cases & Security Validation](#12-edge-cases--security-validation)
 
 ---
 
@@ -68,7 +69,7 @@ All accounts are pre-seeded in the database and ready for immediate login:
 * ✅ **AI Classification**: The AI classifies the issue as `Pothole` or `Garbage` and assigns it to **BBMP**.
 * ✅ **AI Priority Engine**: Computes priority (`Medium` or `High`) and sets an SLA deadline.
 * ✅ **Verification Gate Badge**: Displays the **Hard-Gate Decision Badge** (`VERIFIED`, `PARTIALLY_VERIFIED`, `MANUAL_REVIEW`, `SUSPICIOUS`, or `REJECTED`).
-* ✅ **Evidence Trust Card**: Displays a **Composite Trust Score (0–100%)** broken down into GPS proximity (35%), timestamp recency (20%), and YOLOv8 semantic vision agreement (45%).
+* ✅ **Evidence Trust Card**: Displays a **Composite Trust Score (0–100%)** broken down into GPS proximity (35%), timestamp recency (20%), and CivicAI YOLO11n semantic vision agreement (45%).
 * ✅ **High-Accuracy GPS**: Client geolocation accuracy radius (`pos.coords.accuracy`) is sent to the backend and factored into Gate 1 location checks.
 * ✅ **Tracking Timeline**: Complaint appears in the Citizen's active list under status **Registered**.
 
@@ -99,8 +100,8 @@ All accounts are pre-seeded in the database and ready for immediate login:
      - **OpenCV Diagnostics**: Laplacian blur variance (threshold $\ge 25.0$), exposure brightness ($25 \le L \le 245$), and minimum resolution ($100 \times 100\text{px}$).
      - **Gate 1 (GPS)**: Client coordinates vs. EXIF coordinates distance delta ($\le 500\text{m}$).
      - **Gate 2 (Timestamp)**: Capture recency ($\le 72\text{h}$) and future clock skew rejection ($> 10\text{m}$).
-     - **Gate 3 (Semantic)**: YOLOv8 detected objects and NLP cross-modal cosine similarity score against complaint text.
-     - **Gate 4 (Reused dHash)**: 64-bit perceptual image hash verifying no duplicate recycled photo abuse across past tickets.
+     - **Gate 3 (Semantic)**: CivicAI YOLO11n detected municipal hazards (9 classes) and SentenceTransformers cross-modal agreement score against complaint text.
+     - **Gate 4 (Reused dHash)**: 64-bit perceptual image hash verifying no duplicate recycled photo abuse across past tickets (`MANUAL_REVIEW`).
    * Click **"Accept"** &rarr; Verify status changes to **Accepted** and SLA timer starts counting.
    * Click **"Start Work"** &rarr; Verify status changes to **In Progress**.
 
@@ -119,6 +120,7 @@ All accounts are pre-seeded in the database and ready for immediate login:
 #### 🔍 What to Verify:
 * ✅ Status updates from `In Progress` &rarr; **Resolved**.
 * ✅ Resolution image is tagged as `image_type: "Resolution"` in the database.
+* ✅ Automated Resolution Verification: `verify_resolution_evidence` inspects repair photo against remarks using `CivicAI_YOLO11n_best.pt` and OpenCV diagnostics. Mismatched or invalid evidence is flagged for manual review (`MANUAL_REVIEW`, `is_verified = False`), preventing invalid proof from being accepted as verified.
 * ✅ Audit trail records the officer's action and timestamp in `complaint_status_history`.
 * ✅ A notification is sent to the citizen alerting them to verify the work.
 
@@ -329,15 +331,69 @@ SUMMARY: 11/11 Passed (100.0%) | Failures: 0
 
 ---
 
-## 11. Edge Cases & Security Validation
+## 11. Test Track 9: CivicAI YOLO11n & Multi-Factor Verification Suite
+
+To run the dedicated 5-scenario test suite validating the YOLO11 model, two-sided image-text validation, multi-factor duplicate scoring, conflict routing, and data preservation:
+
+```powershell
+# In workspace root (c:\Users\Lenovo\Desktop\CIVIC)
+python backend/test_civic_ai_yolo11_validation.py
+```
+
+### The 5 Core Verification Scenarios Executed:
+```
+================================================================================
+TEST SUITE: CivicAI YOLO11n Integration & Multi-Factor Verification
+================================================================================
+
+[Requirement 1] CivicAI_YOLO11n_best.pt Model Loading & Civic Hazard Detection...
+   -> Detected Hazards: pothole, garbage, fallen_tree, streetlight, water_leak, road_crack, damaged_road_sign, graffiti, damaged_electrical_pole
+   -> Status: PASSED
+
+[Requirement 2] Two-Sided Image–Text Validation (Citizen Submission Side)...
+   -> Matching Pothole Image: VERIFIED (Trust: 95.0%, is_verified: True)
+   -> Mismatched Laptop Image: MANUAL_REVIEW (is_verified: False, Never Accepted as Verified)
+   -> Status: PASSED
+
+[Requirement 3] Two-Sided Image–Text Validation (Officer Resolution Side)...
+   -> Valid Remediation Proof: VERIFIED (is_verified: True)
+   -> Invalid / Unrelated Proof: MANUAL_REVIEW (is_verified: False, Flagged for Review)
+   -> Status: PASSED
+
+[Requirement 4] Multi-Factor Duplicate Detection & Citizen Data Integrity...
+   -> Weights: Text (50%) + Proximity (35%) + Image (15%)
+   -> High Agreement Incident (Score: 0.91 >= 0.85): Linked to Parent Ticket
+   -> Parent impact_count Incremented, Priority & SLA Reassessed
+   -> Citizen Complaints & Photos Fully Preserved
+   -> Status: PASSED
+
+[Requirement 5] Duplicate Conflict Routing & Decoupled Fraud Detection...
+   -> Image Match + Location Conflict (>150m): MANUAL_REVIEW_CONFLICT (Decision: MANUAL_REVIEW)
+   -> Auto-Merge Prevented: True | False Suspicious Accusation Avoided: True
+   -> Reused Image Alone: MANUAL_REVIEW (Decoupled from SUSPICIOUS)
+   -> Severe GPS Spoofing (>5km): SUSPICIOUS
+   -> Status: PASSED
+
+================================================================================
+SUMMARY: 5/5 Requirements Validated Successfully!
+================================================================================
+```
+
+---
+
+## 12. Edge Cases & Security Validation
 
 | Security / Integrity Check | Test Action | Expected Safe Result |
 |---|---|---|
 | **Cross-Officer Tampering** | Log in as BWSSB Officer and try to transition a BBMP complaint | ❌ Returns `HTTP 403 Forbidden: Officer is not assigned to this complaint` |
 | **Citizen Status Bypass** | Log in as Citizen and try to force status to `Resolved` | ❌ Returns `HTTP 400 Bad Request: Citizens can only close or reopen complaints` |
-| **Duplicate Flooding** | Submit two identical complaints within 50m of each other | ℹ️ Automatically links second complaint as duplicate and closes child ticket |
-| **Tampered / Recycled Image** | Submit a recycled photo from an older complaint or mismatched EXIF GPS | ℹ️ Hard Gate flags `is_reused_image = True` or `gps_match_status = SUSPICIOUS` $\to$ Decision: `SUSPICIOUS` |
-| **Semantic Mismatch** | Submit a complaint for "pothole" with a photo of a dog or office computer | ⚠️ Gate 3 fails $\to$ Decision strictly barred from `VERIFIED`, capped at `SUSPICIOUS` |
+| **Duplicate Flooding** | Submit two identical complaints within 50m of each other | ℹ️ Multi-factor score $\ge 0.85 \implies$ links second complaint as duplicate, preserves child data, increments parent `impact_count` |
+| **Duplicate Geo/Text Conflict** | Submit identical photo but pin $>150\text{m}$ away or conflicting description | ⚠️ Routes to `MANUAL_REVIEW_CONFLICT` (decision: `MANUAL_REVIEW`). Never auto-merges, never falsely marks suspicious |
+| **Borderline Duplicate** | Submit complaint with composite duplicate score $0.60 \le \text{Score} < 0.85$ | ℹ️ Routes to `INCONCLUSIVE_REVIEW` as independent ticket for officer review |
+| **Tampered / Recycled Image** | Submit a recycled photo from an older complaint without GPS spoofing | ℹ️ Gate 4 flags `is_reused_image = True` $\to$ Decision: `MANUAL_REVIEW` (decoupled from fraud) |
+| **Severe GPS Spoofing** | Submit live device GPS $>5000\text{m}$ away from photo EXIF coordinates | 🚨 Gate 1 flags severe distance $\to$ Decision: `SUSPICIOUS` |
+| **Citizen Semantic Mismatch** | Submit a complaint for "pothole" with a photo of a dog or office computer | ⚠️ Gate 3 fails $\to$ Decision: `MANUAL_REVIEW` / `REJECTED`, strictly barred from `VERIFIED`, `is_verified = False` |
+| **Officer Proof Mismatch** | Field officer submits an invalid or unrelated resolution proof photo | ⚠️ `verify_resolution_evidence` fails $\to$ Decision: `MANUAL_REVIEW`, `is_verified = False` recorded in audit trail |
 | **Blurry / Dark Image** | Upload an unreadable, pitch-dark, or blurry photo | ℹ️ OpenCV triggers `MANUAL_REVIEW` requiring officer physical inspection |
 | **SLA Deadline Breach** | Wait for SLA duration to exceed policy limit | ⚠️ System automatically marks ticket `SLA Status: Breached` and flags `is_escalated = True` |
 
@@ -347,12 +403,18 @@ SUMMARY: 11/11 Passed (100.0%) | Failures: 0
 
 - [ ] Citizen can log in and submit complaints in Kannada and English.
 - [ ] AI automatically categorizes issue and routes to the correct Karnataka agency (**BBMP, BESCOM, BWSSB, BSWML**).
+- [ ] CivicAI YOLO11n detects 9 municipal hazard classes with direct category matching.
 - [ ] OpenCV verifies image quality (Laplacian blur variance, luminance, resolution).
 - [ ] Multimodal Hard Gates evaluate EXIF GPS proximity, timestamp recency, semantic matching, and perceptual dHash reuse.
-- [ ] Evidence Trust Score accurately displays badge (`VERIFIED`, `PARTIALLY_VERIFIED`, `MANUAL_REVIEW`, `SUSPICIOUS`, `REJECTED`).
+- [ ] Two-Sided Image–Text Validation strictly prevents invalid evidence from being accepted as verified on both citizen and officer submissions (`is_verified = False`).
+- [ ] Multi-factor duplicate engine ($50\%$ Text, $35\%$ Proximity, $15\%$ Image) links tickets on incident agreement ($\ge 0.85$).
+- [ ] Duplicate conflicts route to `MANUAL_REVIEW_CONFLICT` without auto-merging or false fraud flags.
+- [ ] Reused image alone routes to `MANUAL_REVIEW`, reserving `SUSPICIOUS` for severe GPS spoofing ($> 5\text{km}$).
 - [ ] Field officers can inspect evidence audit diagnostics, accept, progress, and submit photo resolution proof.
 - [ ] Citizen verification allows both 1-click approval (5-star rating) and reopen feedback loops.
 - [ ] Admin dashboard displays GIS hotspot clustering and SLA compliance dials.
 - [ ] Phase 16 ML early warning calculates SLA breach probability and 14-day grievance forecasts.
+- [ ] CivicAI YOLO11n & Multi-Factor suite (`python backend/test_civic_ai_yolo11_validation.py`) executes 5/5 tests cleanly.
 - [ ] Hard-Gate Evidence test suite (`python -m backend.test_evidence_gates`) executes 11/11 tests cleanly.
+- [ ] 11-Fix Comprehensive Verification suite (`python backend/test_civic_fixes_verification.py`) executes 11/11 tests cleanly.
 - [ ] Master integration test suite (`test_e2e.py`) executes 13/13 steps cleanly.

@@ -6,9 +6,14 @@ from backend.app.services.duplicate import check_duplicate_complaint, haversine_
 from backend.app.services.routing import assign_officer_to_complaint
 from backend.app.services.evidence import (
     compute_evidence_trust, check_image_quality, run_yolo_detection,
-    compute_perceptual_hash, hamming_distance, evaluate_semantic_match
+    compute_perceptual_hash, hamming_distance, evaluate_semantic_match,
+    verify_resolution_evidence
 )
-from backend.app.services.sla import compute_sla_deadline, get_sla_status, get_sla_summary, update_all_sla_statuses
+from backend.app.services.sla import (
+    compute_sla_deadline, compute_response_sla_deadline, compute_resolution_sla_deadline,
+    get_sla_status, get_sla_summary, update_all_sla_statuses,
+    DEFAULT_RESPONSE_SLA_HOURS, DEFAULT_RESOLUTION_SLA_HOURS, DEFAULT_SLA_HOURS
+)
 
 __all__ = [
     "translate_text",
@@ -29,6 +34,11 @@ __all__ = [
     "hamming_distance",
     "evaluate_semantic_match",
     "compute_sla_deadline",
+    "compute_response_sla_deadline",
+    "compute_resolution_sla_deadline",
+    "DEFAULT_RESPONSE_SLA_HOURS",
+    "DEFAULT_RESOLUTION_SLA_HOURS",
+    "DEFAULT_SLA_HOURS",
     "get_sla_status",
     "get_sla_summary",
     "update_all_sla_statuses",

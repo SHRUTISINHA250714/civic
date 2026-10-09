@@ -40,7 +40,7 @@ class Settings(BaseSettings):
     
     # AI models settings
     SENTENCE_TRANSFORMER_MODEL: str = "all-MiniLM-L6-v2"
-    YOLO_MODEL: str = "yolov8n.pt"  # falls back to local execution
+    YOLO_MODEL: str = "CivicAI_YOLO11n_best.pt"  # Specialized civic hazard detection
     GEMINI_API_KEY: Optional[str] = None
     
     class Config:

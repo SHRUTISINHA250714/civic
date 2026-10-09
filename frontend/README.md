@@ -1,36 +1,55 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# CivicAI Karnataka – Frontend Portal
 
-## Getting Started
+The web frontend for the **CivicAI Karnataka Smart Civic Grievance Redressal System**, built with [Next.js 16](https://nextjs.org) (App Router), React 19, Tailwind CSS, and Leaflet GIS mapping.
 
-First, run the development server:
+---
 
+## 🚀 Key Portal Features
+
+* **Citizen Portal (`/citizen/dashboard`)**:
+  - Multilingual reporting (Kannada, English, Hinglish, Voice Audio Note).
+  - Geolocation pin placement and live GPS coordinate capture.
+  - Mandatory photographic evidence upload with client-side format/dimension validation.
+  - Multi-factor duplicate prevention and display of *"Reported by X people"*.
+  - Citizen resolution proof inspection and 1-click closure (1–5 star rating) or reopen feedback loop.
+  - Evidence trust badge display (`VERIFIED`, `PARTIALLY_VERIFIED`, `MANUAL_REVIEW`, `SUSPICIOUS`, `REJECTED`).
+* **Officer Portal (`/officer/dashboard`)**:
+  - Dual bilingual grievance cards: *"Original Complaint"* (native script + audio player) and *"English Translation"*.
+  - Separated media inspection: *"Citizen Evidence (Original)"* vs *"Officer Repair Verification (Completed)"*.
+  - Mandatory post-fix photographic proof and descriptive remediation logs verified by `verify_resolution_evidence`.
+  - Dynamic SLA timer countdowns, duration badges, and breach warnings.
+* **Administrator Portal (`/admin/dashboard`)**:
+  - City-wide GIS heatmaps and spatial ward cluster analysis.
+  - Phase 16 ML early warning analytics (SLA breach probability and 14-day grievance forecasts).
+  - Cross-department performance metrics across BBMP, BESCOM, BWSSB, and BSWML.
+
+---
+
+## 🛠️ Getting Started
+
+### 1. Install Dependencies
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+npm install
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+### 2. Run Development Server
+```bash
+npm run dev
+```
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+Open [http://localhost:3000](http://localhost:3000) with your browser to access the portal.
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+### 3. Production Build
+```bash
+npm run build
+npm start
+```
 
-## Learn More
+---
 
-To learn more about Next.js, take a look at the following resources:
-
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
-
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+## 🔗 Backend API Connection
+The frontend connects to the FastAPI backend running at `http://127.0.0.1:8000`. Ensure the backend server is running:
+```powershell
+uvicorn backend.app.main:app --reload
+```
+Interactive API docs are available at `http://127.0.0.1:8000/docs`.

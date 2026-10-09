@@ -147,13 +147,13 @@ def seed_db():
         # ─── 4. Seed SLA Policies ────────────────────────────────────────────────────
         print("Seeding SLA Policies...")
         default_sla = {
-            "Critical": 12.0,
-            "High":     24.0,
-            "Medium":   48.0,
-            "Low":      72.0,
+            "Critical": {"response_hours": 2.0, "resolution_hours": 24.0},
+            "High":     {"response_hours": 4.0, "resolution_hours": 48.0},
+            "Medium":   {"response_hours": 8.0, "resolution_hours": 72.0},
+            "Low":      {"response_hours": 24.0, "resolution_hours": 120.0},
         }
         for cat_name, cat_obj in db_cats.items():
-            for priority, hours in default_sla.items():
+            for priority, timings in default_sla.items():
                 existing = db.query(SLAPolicy).filter(
                     SLAPolicy.category_id == cat_obj.id,
                     SLAPolicy.priority == priority
@@ -162,9 +162,13 @@ def seed_db():
                     db.add(SLAPolicy(
                         category_id=cat_obj.id,
                         priority=priority,
-                        resolution_hours=hours,
+                        resolution_hours=timings["resolution_hours"],
+                        response_hours=timings["response_hours"],
                         warning_threshold_pct=0.75
                     ))
+                else:
+                    existing.resolution_hours = timings["resolution_hours"]
+                    existing.response_hours = timings["response_hours"]
         
         # ─── 5. Seed Admin User ─────────────────────────────────────────────────────
         print("Seeding Admin User...")

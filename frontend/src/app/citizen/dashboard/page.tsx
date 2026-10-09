@@ -85,6 +85,14 @@ function SLABar({ slaSummary, status }: { slaSummary: any; status?: string }) {
           )}
         </div>
       )}
+      {slaSummary.response_sla_duration_str && !isResolved && (
+        <div className="flex items-center justify-between text-[9px] text-slate-400 border-t border-slate-150 dark:border-slate-800/60 pt-1">
+          <span className="text-slate-500 dark:text-slate-400">Response SLA ({slaSummary.response_sla_duration_str}):</span>
+          <span className={slaSummary.response_is_breached ? 'text-red-500 font-bold' : 'text-slate-600 dark:text-slate-300 font-medium'}>
+            {slaSummary.response_time_remaining_str || slaSummary.response_sla_status || 'Pending'}
+          </span>
+        </div>
+      )}
     </div>
   );
 }

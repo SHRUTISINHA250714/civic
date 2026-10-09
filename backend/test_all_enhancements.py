@@ -8,18 +8,28 @@ from datetime import datetime, timedelta, timezone
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 from backend.app.services.predictive import predictive_service, FEATURE_NAMES
-from backend.app.services.sla import get_escalation_details, get_predictive_early_warning, DEFAULT_SLA_HOURS
+from backend.app.services.sla import (
+    get_escalation_details, get_predictive_early_warning,
+    DEFAULT_RESPONSE_SLA_HOURS, DEFAULT_RESOLUTION_SLA_HOURS, DEFAULT_SLA_HOURS
+)
 from backend.app.core.database import SessionLocal
 from backend.app.models.complaint import Complaint
 
 def test_sla_rules_and_escalation():
-    print("\n--- 1. Testing Phase 14 SLA Flow & Progressive Escalation ---")
-    # Verify SLA durations unchanged
-    assert DEFAULT_SLA_HOURS["Critical"] == 12.0, "Critical must be 12h"
-    assert DEFAULT_SLA_HOURS["High"] == 24.0, "High must be 24h"
-    assert DEFAULT_SLA_HOURS["Medium"] == 48.0, "Medium must be 48h"
-    assert DEFAULT_SLA_HOURS["Low"] == 72.0, "Low must be 72h"
-    print("✓ Existing Critical 12h / High 24h / Medium 48h / Low 72h SLA flow unchanged.")
+    print("\n--- 1. Testing Separate Response & Resolution SLA Timings & Progressive Escalation ---")
+    # Verify Response SLA durations
+    assert DEFAULT_RESPONSE_SLA_HOURS["Critical"] == 2.0, "Critical response must be 2h"
+    assert DEFAULT_RESPONSE_SLA_HOURS["High"] == 4.0, "High response must be 4h"
+    assert DEFAULT_RESPONSE_SLA_HOURS["Medium"] == 8.0, "Medium response must be 8h"
+    assert DEFAULT_RESPONSE_SLA_HOURS["Low"] == 24.0, "Low response must be 24h"
+
+    # Verify Resolution SLA durations
+    assert DEFAULT_RESOLUTION_SLA_HOURS["Critical"] == 24.0, "Critical resolution must be 24h"
+    assert DEFAULT_RESOLUTION_SLA_HOURS["High"] == 48.0, "High resolution must be 48h"
+    assert DEFAULT_RESOLUTION_SLA_HOURS["Medium"] == 72.0, "Medium resolution must be 72h"
+    assert DEFAULT_RESOLUTION_SLA_HOURS["Low"] == 120.0, "Low resolution must be 120h"
+    assert DEFAULT_SLA_HOURS == DEFAULT_RESOLUTION_SLA_HOURS, "DEFAULT_SLA_HOURS must match Resolution SLA"
+    print("✓ Separate Response SLA (2h/4h/8h/24h) and Resolution SLA (24h/48h/72h/120h) verified.")
 
     # Progressive escalation
     now = datetime.utcnow()

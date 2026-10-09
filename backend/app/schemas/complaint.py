@@ -68,7 +68,8 @@ class EvidenceCheckResponse(BaseModel):
         from_attributes = True
 
 class SLASummaryResponse(BaseModel):
-    """SLA tracking summary."""
+    """SLA tracking summary (Response & Resolution SLAs)."""
+    # Resolution SLA (Primary SLA)
     sla_deadline: Optional[str] = None
     sla_status: str                 # Normal, Warning, Breached
     is_escalated: bool
@@ -82,9 +83,25 @@ class SLASummaryResponse(BaseModel):
     predictive_early_warning: Optional[bool] = False
     predictive_breach_prob: Optional[float] = None
     predictive_message: Optional[str] = None
+    recommended_action: Optional[str] = None
     hours_overdue: Optional[float] = None
     escalation_level: Optional[int] = None
     escalation_stage: Optional[str] = None
+
+    # Response SLA
+    response_sla_deadline: Optional[str] = None
+    response_sla_duration_hours: Optional[float] = None
+    response_sla_duration_str: Optional[str] = None
+    response_hours_remaining: Optional[float] = None
+    response_time_remaining_str: Optional[str] = None
+    response_sla_status: Optional[str] = "Pending Response"
+    response_is_breached: Optional[bool] = False
+
+    # Explicit Resolution SLA aliases
+    resolution_sla_deadline: Optional[str] = None
+    resolution_sla_duration_hours: Optional[float] = None
+    resolution_sla_duration_str: Optional[str] = None
+    resolution_hours_remaining: Optional[float] = None
 
 
 class CitizenVerifyResolutionRequest(BaseModel):
@@ -122,9 +139,11 @@ class ComplaintResponse(BaseModel):
     assigned_officer_name: Optional[str] = None
     duplicate_of_complaint_id: Optional[int] = None
     
-    # SLA
+    # SLA (Resolution & Response SLAs)
     sla_deadline: Optional[str] = None
     sla_status: Optional[str] = "Normal"
+    response_sla_deadline: Optional[str] = None
+    response_sla_status: Optional[str] = "Pending"
     is_escalated: bool = False
     
     # Citizen verification
