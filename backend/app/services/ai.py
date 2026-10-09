@@ -932,160 +932,18 @@ def translate_text(text: str) -> Tuple[str, str, float]:
 
 def classify_complaint(text: str) -> Tuple[str, float]:
     """
-    Classifies complaint text into predefined categories using SentenceTransformer semantic similarity
-    combined with high-precision domain keyword intent scoring strictly across the 4 Karnataka Civic Authorities:
-    - BBMP: Roads, Potholes, Footpaths, Stormwater Drains, Streetlights, Trees, Parks, Lakes, Civic Services
-    - BSWML: Door-to-Door Collection, Garbage Accumulation, Illegal Dumping, Burning, C&D Waste
-    - BESCOM: Power Supply, Voltage, Lines & Poles, Transformers, Meters & Billing
-    - BWSSB: Water Supply, Pipeline Leakage, Quality, Sewerage & Drainage, Sewage Overflow, Manholes
+    Classifies complaint text into predefined categories using:
+    1. Deterministic contextual routing engine (resolve_department_routing) resolving
+       overlapping civic categories across BBMP, BESCOM, BWSSB, and BSWML based on
+       contextual multi-token phrases and cross-agency rules.
+    2. Fallback to SentenceTransformer semantic similarity across the 4 authorities
+       when deterministic rules are inconclusive.
     """
-    text_lower = text.lower()
+    from backend.app.services.routing import resolve_department_routing
 
-    # 1. BBMP Road & Pothole signals (HIGH PRIORITY: road/pothole issues strictly route to BBMP)
-    is_pothole = any(w in text_lower for w in [
-        "pothole", "potholes", "gundi", "crater", "craters", "road pit", "road hole",
-        "road cave-in", "broken asphalt", "road cracks", "road damage", "road repair",
-        "damaged road", "fill pothole", "pothole na", "bad road", "road broken",
-        "pothole aagide", "asphalt damaged", "tar road", "uneven road"
-    ]) or ("road" in text_lower and any(w in text_lower for w in [
-        "damage", "repair", "broken", "cave", "hole", "crater", "asphalt", "fill", "mg road", "severe", "danger", "hazard", "two-wheeler", "vehicles"
-    ]))
-
-    # 2. Streetlight signal (STRICT RULE: Municipal street lighting routes to BBMP, NOT BESCOM)
-    is_streetlight = any(w in text_lower for w in [
-        "streetlight", "street light", "dark road", "street lamp", "light uriyalla",
-        "light not working", "streetlamp", "flickering light", "broken lamp",
-        "bidi dipa", "beedi deepa", "no street light", "bulb fused", "lamp post"
-    ])
-
-    # 3. BSWML Solid Waste signals (Garbage & waste strictly routes to BSWML)
-    is_garbage = any(w in text_lower for w in [
-        "garbage", "trash", "waste", "kachra", "kasa", "dustbin", "waste collection",
-        "illegal dumping", "dumping", "sweeping", "foul smell", "stinking waste",
-        "garbage burning", "plastic burning", "waste burning", "segregation",
-        "black spot", "blackspot", "auto tipper", "c&d waste", "demolition waste", "bswml",
-        "solid waste", "litter"
-    ])
-
-    # 4. BESCOM Electrical signals
-    is_power = any(w in text_lower for w in [
-        "power cut", "power outage", "blackout", "no current", "current illa",
-        "load shedding", "electricity failure", "power failure", "intermittent power"
-    ])
-    is_voltage = any(w in text_lower for w in ["voltage", "low voltage", "high voltage", "voltage fluctuation", "power surge"])
-    is_electric_hazard = any(w in text_lower for w in [
-        "electric wire", "live wire", "sparking", "transformer", "electric pole",
-        "shock hazard", "bescom", "snapped wire", "tilted pole", "spark", "transformer blast", "exploded"
-    ])
-    is_electric_billing = any(w in text_lower for w in ["electric bill", "electricity bill", "meter reading", "faulty meter", "meter burnt", "tariff"])
-
-    # 5. BWSSB Water & Sewerage signals (Drinking water supply & underground sewage)
-    is_water_quality = any(w in text_lower for w in [
-        "dirty water", "contaminated", "contamination", "muddy", "discoloured", "discolored",
-        "foul water", "stinking water", "bad smell water", "bad taste water", "smelly water"
-    ])
-    is_water_leak = any(w in text_lower for w in [
-        "pipeline burst", "pipe leak", "water pipe burst", "pipeline leakage", "water main leak"
-    ])
-    is_water_supply = any(w in text_lower for w in [
-        "no water supply", "water not coming", "dry tap", "drinking water",
-        "low water pressure", "neeru barthilla", "kaveri water", "water shortage"
-    ])
-    is_sewage = any(w in text_lower for w in [
-        "sewage", "gutter", "drainage", "manhole", "sewer line", "charandi", "gatara",
-        "sewage overflow", "sewer overflow", "blocked sewer", "manhole open", "broken manhole"
-    ])
-    is_water_billing = any(w in text_lower for w in ["water bill", "water meter", "rr number", "bwssb tanker"])
-
-    # 6. Other BBMP Civic signals
-    is_footpath = any(w in text_lower for w in ["footpath", "sidewalk", "broken footpath", "paving", "curb", "pedestrian path", "foot path"])
-    is_drain = any(w in text_lower for w in ["stormwater", "waterlogging", "rain flooding", "rainwater", "rajakaluve", "storm drain", "flood point", "water logging"])
-    is_tree = any(w in text_lower for w in ["tree fall", "tree fallen", "branch broken", "storm damage tree", "dangerous tree", "dead tree", "overgrown branch"])
-    is_lake = any(w in text_lower for w in ["lake", "kere", "lake waste", "lake pollution", "lake sewage"])
-    is_park = any(re.search(r'\b' + re.escape(w) + r'\b', text_lower) for w in ["park", "parks", "garden", "playground", "park bench"])
-    is_road = any(w in text_lower for w in ["road damage", "asphalt", "broken road", "rasthe", "road cut", "road divider", "median"])
-    is_sanitation = any(w in text_lower for w in ["public toilet", "urinal", "stray dog", "dead animal carcass", "animal removal", "encroachment"])
-
-    # ── Priority Rule-Based Direct Category Assignment ─────────────────────
-    # PRIORITY 1: Road & Pothole complaints STRICTLY route to BBMP
-    if is_pothole:
-        return "Potholes & Damaged Roads", 0.98
-
-    # PRIORITY 2: Solid Waste Management STRICTLY routes to BSWML
-    if is_garbage:
-        if any(w in text_lower for w in ["burn", "smoke", "fire", "plastic"]):
-            return "Garbage Burning & Air Pollution", 0.96
-        if any(w in text_lower for w in ["not collected", "missed", "van not", "auto tipper"]):
-            return "Garbage Not Collected", 0.96
-        if any(w in text_lower for w in ["c&d", "construction", "demolition", "debris"]):
-            return "Bulk & Construction Waste Dumping", 0.95
-        if any(w in text_lower for w in ["dump", "roadside", "empty plot", "vacant"]):
-            return "Illegal Roadside Waste Dumping", 0.94
-        if any(w in text_lower for w in ["smell", "stink", "rotten"]):
-            return "Foul Smell & Waste Health Hazard", 0.93
-        if any(w in text_lower for w in ["segregat", "wet", "dry"]):
-            return "Wet & Dry Waste Segregation Issues", 0.92
-        return "Overflowing Garbage Bins & Blackspots", 0.96
-
-    # PRIORITY 3: Streetlight explicitly routes to BBMP
-    if is_streetlight:
-        return "Damaged Streetlights", 0.96
-
-    # PRIORITY 4: Electricity & Power (BESCOM) - high hazard priority
-    if is_electric_hazard:
-        if any(w in text_lower for w in ["transformer", "blast", "explosion"]):
-            return "Transformer Failure & Sparks", 0.96
-        if any(w in text_lower for w in ["wire", "pole", "snapped", "dangling"]):
-            return "Damaged Electric Poles & Broken Wires", 0.96
-        if "spark" in text_lower:
-            return "Transformer Failure & Sparks", 0.96
-        return "Exposed Wires & Electrical Hazards", 0.95
-    if is_voltage:
-        return "Voltage Fluctuation (Low/High)", 0.95
-    if is_power:
-        if any(w in text_lower for w in ["frequent", "repeated", "again"]):
-            return "Frequent Power Cuts", 0.94
-        return "Power Outage & Blackout", 0.96
-    if is_electric_billing:
-        return "Electricity Meter & Billing Issues", 0.94
-
-    # PRIORITY 5: Water & Sewerage (BWSSB)
-    if is_water_quality:
-        return "Contaminated Drinking Water", 0.96
-    if is_water_leak and any(w in text_lower for w in ["pipeline", "pipe", "burst", "leak"]):
-        return "Water Pipeline Burst & Leakage", 0.96
-    if is_water_supply:
-        if "low" in text_lower or "pressure" in text_lower:
-            return "Low Water Pressure", 0.94
-        return "No Water Supply", 0.96
-    if is_sewage:
-        if any(w in text_lower for w in ["manhole", "cover", "lid", "open"]):
-            return "Damaged Manhole Cover & Missing Lid", 0.96
-        if any(w in text_lower for w in ["block", "chok"]):
-            return "Blocked Sewer Line & Manhole Overflow", 0.95
-        return "Sewage Overflow & Gutter Water", 0.95
-    if is_water_billing:
-        return "Water Meter & Tanker Issues", 0.93
-
-    # PRIORITY 6: Other BBMP Civic Services
-    if is_footpath:
-        return "Broken Footpaths & Walkways", 0.95
-    if is_drain:
-        return "Blocked Stormwater Drains & Waterlogging", 0.95
-    if is_tree:
-        return "Tree Fall & Dangerous Branches", 0.95
-    if is_lake:
-        return "Lakes & Water Bodies", 0.94
-    if is_park:
-        return "Park Maintenance & Public Gardens", 0.93
-    if is_road:
-        return "Potholes & Damaged Roads", 0.94
-    if is_sanitation:
-        if any(w in text_lower for w in ["toilet", "urinal"]):
-            return "Public Toilet & Civic Amenities", 0.92
-        if any(w in text_lower for w in ["animal", "dog", "carcass"]):
-            return "Stray Animal & Dead Animal Removal", 0.92
-        return "Road & Footpath Encroachment", 0.91
+    routing_res = resolve_department_routing(text)
+    if routing_res.get("category_name"):
+        return routing_res["category_name"], routing_res["confidence"]
 
     # Fallback to SentenceTransformer semantic similarity across the 4 authorities
     if not encoder_model:
@@ -1123,7 +981,15 @@ def classify_complaint_structured(text: str) -> Dict[str, Any]:
       "category_name": "Sewage Overflow & Gutter Water"
     }
     """
-    cat_name, confidence = classify_complaint(text)
+    from backend.app.services.routing import resolve_department_routing
+
+    routing_res = resolve_department_routing(text)
+    if routing_res.get("category_name"):
+        cat_name = routing_res["category_name"]
+        confidence = routing_res["confidence"]
+    else:
+        cat_name, confidence = classify_complaint(text)
+
     priority, prio_conf = predict_priority(text, cat_name)
 
     meta = CATEGORY_HIERARCHY.get(cat_name, {
@@ -1154,6 +1020,11 @@ def classify_complaint_structured(text: str) -> Dict[str, Any]:
         "department_name": agency_info["name"],
         "category_name": cat_name,
         "predicted_category_name": cat_name,
+        "secondary_agency": routing_res.get("secondary_agency"),
+        "coordination_reason": routing_res.get("coordination_reason"),
+        "is_conflict": routing_res.get("is_conflict", False),
+        "needs_manual_review": routing_res.get("needs_manual_review", False),
+        "routing_reason": routing_res.get("routing_reason"),
     }
 
 def predict_priority(
