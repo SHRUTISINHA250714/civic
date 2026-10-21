@@ -38,11 +38,13 @@ def _compat_client_init(self, *args, **kwargs):
     return _orig_client_init(self, *args, **kwargs)
 httpx.Client.__init__ = _compat_client_init
 
+from unittest.mock import patch
 from starlette.testclient import TestClient
 from backend.app.main import app
 from backend.app.core.database import SessionLocal
 from backend.app.models.user import User, Officer
 from backend.app.models.complaint import Complaint, DuplicateComplaintMapping, Notification
+from backend.test_helpers import generate_test_image, get_test_image_bytes, cleanup_temp_images
 
 client = TestClient(app)
 
@@ -51,6 +53,12 @@ def run_tests():
     print("PHASE 10 DUPLICATE COMPLAINT UX & TRACKING - AUTOMATED VERIFICATION SUITE")
     print("=" * 75)
 
+    with patch("backend.app.services.evidence.evaluate_semantic_match", return_value=(
+        "MATCH", 0.95, "Potholes & Damaged Roads", "Verified pothole match"
+    )):
+        _execute_scenarios()
+
+def _execute_scenarios():
     db = SessionLocal()
     try:
         # ── Setup: Login Citizen A (primary) ───────────────────────────────────
@@ -124,13 +132,14 @@ def run_tests():
         # ─────────────────────────────────────────────────────────────────────
         print("\n[Scenario 1] Testing unique complaint creation (Citizen A)...")
         parent_desc = "Massive dangerous pothole with water logging near Indiranagar 100ft road corner"
+        img_bytes_parent = get_test_image_bytes(seed=101)
         res_unique = client.post("/api/v1/complaints", data={
             "description": parent_desc,
             "language": "English",
             "location_latitude": base_lat,
             "location_longitude": base_lon,
             "location_address": "Indiranagar 100ft Road, Bengaluru",
-        }, headers=citizen_a_headers)
+        }, files={"file": ("evidence_parent.jpg", img_bytes_parent, "image/jpeg")}, headers=citizen_a_headers)
         assert res_unique.status_code == 201, f"Unique complaint failed: {res_unique.text}"
         parent_data = res_unique.json()
         parent_id = parent_data["id"]
@@ -168,14 +177,15 @@ def run_tests():
         assert check_data["parent_status"] == parent_data["status"], "parent_status mismatch"
         print(f"✓ Pre-check confirmed duplicate of Parent #{parent_id} (Similarity: {check_data['similarity_score']})")
 
-        # Now Citizen B submits the grievance
+        # Now Citizen B submits the grievance with a different photo of the same issue
+        img_bytes_child = get_test_image_bytes(seed=102)
         res_child = client.post("/api/v1/complaints", data={
             "description": dup_desc,
             "language": "English",
             "location_latitude": dup_lat,
             "location_longitude": dup_lon,
             "location_address": "Near 100ft Road, Indiranagar",
-        }, headers=citizen_b_headers)
+        }, files={"file": ("evidence_child.jpg", img_bytes_child, "image/jpeg")}, headers=citizen_b_headers)
         assert res_child.status_code == 201, f"Child complaint creation failed: {res_child.text}"
         child_data = res_child.json()
         child_id = child_data["id"]
@@ -271,10 +281,7 @@ def run_tests():
         print(f"  - In-App Notification dispatched: \"{notif.message}\"")
 
         # Step 6c: In Progress -> Resolved (via resolution upload)
-        dummy_res_path = "test_resolution.jpg"
-        with open(dummy_res_path, "wb") as f:
-            f.write(b'\xff\xd8\xff\xe0\x00\x10JFIF\x00\x01\x01\x01\x00`\x00`\x00\x00\xff\xdb\x00C\x00\x08\x06\x06\x07\x06\x05\x08\x07\x07\x07\t\t\x08\n\x0c\x14\r\x0c\x0b\x0b\x0c\x19\x12\x13\x0f\x14\x1d\x1a\x1f\x1e\x1d\x1a\x1c\x1c $.\' \",#\x1c\x1c(7),01444\x1f\'9=82<.342\xff\xc0\x00\x0b\x08\x00\x01\x00\x01\x01\x01\x11\x00\xff\xc4\x00\x1f\x00\x00\x01\x05\x01\x01\x01\x01\x01\x01\x00\x00\x00\x00\x00\x00\x00\x00\x01\x02\x03\x04\x05\x06\x07\x08\t\n\x0b\xff\xda\x00\x08\x01\x01\x00\x00?\x00\xbf\x00\xff\xd9')
-
+        dummy_res_path = generate_test_image(seed=999)
         with open(dummy_res_path, "rb") as res_file:
             resolve_res = client.post(
                 f"/api/v1/complaints/{parent_id}/resolve",
@@ -293,7 +300,8 @@ def run_tests():
         # Scenario 7: Multiple duplicate citizens -> all linked to same parent
         # ─────────────────────────────────────────────────────────────────────
         print("\n[Scenario 7] Testing multiple duplicate citizen submissions (Citizen C)...")
-        # Citizen C also reports this same pothole
+        # Citizen C also reports this same pothole with a distinct image
+        img_bytes_child_c = get_test_image_bytes(seed=103)
         res_child_c = client.post("/api/v1/complaints", data={
             "description": "Indiranagar 100 feet road very big pothole broken road bad condition",
             "language": "English",
@@ -301,7 +309,7 @@ def run_tests():
             "location_longitude": round(base_lon + 0.0001, 6),
             "location_address": "Indiranagar 100ft road",
             "duplicate_of_id": parent_id
-        }, headers=citizen_c_headers)
+        }, files={"file": ("evidence_child_c.jpg", img_bytes_child_c, "image/jpeg")}, headers=citizen_c_headers)
         assert res_child_c.status_code == 201, f"Citizen C submission failed: {res_child_c.text}"
         child_c_data = res_child_c.json()
         child_c_id = child_c_data["id"]
@@ -321,6 +329,7 @@ def run_tests():
         # Scenario 8: Repeated submission / retry -> Idempotent
         # ─────────────────────────────────────────────────────────────────────
         print("\n[Scenario 8] Testing idempotency on repeated submission/retry (Citizen C)...")
+        # Retry with the same image and details
         res_retry = client.post("/api/v1/complaints", data={
             "description": "Indiranagar 100 feet road very big pothole broken road bad condition",
             "language": "English",
@@ -328,7 +337,7 @@ def run_tests():
             "location_longitude": round(base_lon + 0.0001, 6),
             "location_address": "Indiranagar 100ft road",
             "duplicate_of_id": parent_id
-        }, headers=citizen_c_headers)
+        }, files={"file": ("evidence_child_c.jpg", img_bytes_child_c, "image/jpeg")}, headers=citizen_c_headers)
         assert res_retry.status_code in (200, 201), f"Retry failed: {res_retry.text}"
         retry_data = res_retry.json()
         assert retry_data["id"] == child_c_id, f"Expected existing Report ID #{child_c_id}, got #{retry_data['id']}"
@@ -381,6 +390,7 @@ def run_tests():
 
     finally:
         db.close()
+        cleanup_temp_images()
         for p in ["test_resolution.jpg", "test_evidence.jpg"]:
             if os.path.exists(p):
                 try: os.remove(p)

@@ -47,7 +47,6 @@ try:
         os.path.join(base_dir, "..", "..", "..", "CivicAI_YOLO11n_best.pt"),
         os.path.join("backend", "CivicAI_YOLO11n_best.pt"),
         "CivicAI_YOLO11n_best.pt",
-        "yolov8n.pt",
     ]
     resolved_model_path = None
     for p in possible_paths:
@@ -58,13 +57,24 @@ try:
     if not resolved_model_path:
         resolved_model_path = model_name
 
+    if not os.path.exists(resolved_model_path):
+        raise FileNotFoundError(f"Civic model file not found at: {resolved_model_path}")
+
     yolo_model = YOLO(resolved_model_path)
     print(f"YOLO model loaded successfully from: {resolved_model_path}")
 except Exception as e:
-    print(f"Failed to load primary YOLO model ({e}). Attempting fallback to yolov8n.pt...")
+    warning_banner = (
+        "\n" + "!" * 78 + "\n"
+        f"WARNING: Primary CivicAI YOLO model was NOT loaded ({e})!\n"
+        "Civic hazard detection is DISABLED.\n"
+        "Attempting fallback to generic yolov8n.pt (civic defect detection unavailable)...\n"
+        + "!" * 78
+    )
+    print(warning_banner)
+    logger.warning("WARNING: Primary CivicAI YOLO model was NOT loaded (%s). Civic hazard detection is DISABLED.", e)
     try:
         yolo_model = YOLO("yolov8n.pt")
-        print("Fallback YOLO (yolov8n.pt) loaded.")
+        print("WARNING: Fallback YOLO (yolov8n.pt) loaded. NOTE: Civic defect detection is DISABLED.")
     except Exception as e2:
         print("Fallback YOLO also failed:", e2)
         yolo_model = None
@@ -834,7 +844,8 @@ def translate_text(text: str) -> Tuple[str, str, float]:
         try:
             import google.generativeai as genai
             genai.configure(api_key=gemini_key)
-            gmodel = genai.GenerativeModel("gemini-1.5-flash")
+            model_name = getattr(settings, "GEMINI_MODEL", "gemini-flash-latest")
+            gmodel = genai.GenerativeModel(model_name)
             prompt = (
                 f"You are an expert Kannada and Kanglish civic complaint translator. "
                 f"Translate the following citizen civic grievance into clear, formal, standard English. "

@@ -167,3 +167,11 @@ All default test accounts are seeded via `python -m backend.app.seed`:
   cd frontend
   npm run build
   ```
+
+
+  Setup on Mac :
+    python3 -m venv venv
+    source venv/bin/activate
+    pip install -r backend/requirements.txt
+    python -m backend.app.seed
+    uvicorn backend.app.main:app --reload
