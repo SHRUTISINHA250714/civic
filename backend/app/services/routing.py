@@ -473,11 +473,64 @@ def resolve_department_routing(
         }
 
     # ─────────────────────────────────────────────────────────────────────────
+    # 7.5 Dead Animal Carcass on Road / Public Space (BSWML Solid Waste)
+    # Under Karnataka municipal sanitation rules, dead animal carcass removal
+    # is handled strictly by BSWML solid waste management, not BBMP Animal Control.
+    # ─────────────────────────────────────────────────────────────────────────
+    is_dead_animal = any(w in text_lower for w in [
+        "dead animal", "carcass", "dead dog", "dead cat", "dead bird", "dead cow", "dead cattle", "animal carcass"
+    ])
+    if is_dead_animal:
+        return {
+            "category_name": "Dead Animal Waste on Road",
+            "agency": "BSWML",
+            "confidence": 0.96,
+            "secondary_agency": None,
+            "coordination_reason": None,
+            "is_conflict": False,
+            "needs_manual_review": False,
+            "routing_reason": "Dead animal carcass removal on public street routed to BSWML sanitation."
+        }
+
+    # Pre-compute garbage indicator for municipal facilities
+    is_garbage = any(w in text_lower for w in [
+        "garbage", "trash", "waste", "kachra", "kasa", "dustbin", "waste collection",
+        "illegal dumping", "dumping", "dumped", "sweeping", "segregation", "black spot", "blackspot",
+        "auto tipper", "bswml", "solid waste", "litter", "food scraps", "plastic waste",
+        "food waste", "vegetable waste"
+    ])
+
+    # ─────────────────────────────────────────────────────────────────────────
     # 8. Core BBMP Specific Facilities (Footpaths, Parks, Lakes, Trees, Amenities)
     # Evaluated prior to general road defect keywords to prevent false pothole triggers.
     # ─────────────────────────────────────────────────────────────────────────
     has_pothole_or_crater = any(w in text_lower for w in ["pothole", "potholes", "gundi", "gundigalu", "crater", "craters", "road hole"])
-    if not has_pothole_or_crater and any(w in text_lower for w in ["footpath", "sidewalk", "broken footpath", "paving", "curb", "pedestrian path", "foot path"]):
+    is_encroachment = any(w in text_lower for w in [
+        "encroachment", "encroached", "vendors blocking", "illegal shop", "footpath blocked",
+        "blocking the footpath", "blocking footpath", "blocking pavement", "blocking walkway"
+    ])
+    footpath_terms = [
+        r"footpath", r"footpaths", r"foot path", r"foot paths",
+        r"broken footpath",
+        r"sidewalk", r"sidewalks",
+        r"pavement", r"pavements",
+        r"walkway", r"walkways",
+        r"pedestrian walkway", r"pedestrian walkways",
+        r"pedestrian path", r"pedestrian paths",
+        r"footway", r"footways",
+        r"paver", r"pavers",
+        r"paving slab", r"paving slabs",
+        r"paving",
+        r"walking path", r"walking paths",
+        r"curb", r"curbs", r"kerb", r"kerbs"
+    ]
+    has_footpath_keyword = any(re.search(r'\b' + pattern + r'\b', text_lower) for pattern in footpath_terms)
+    has_footpath_tile = bool(
+        re.search(r'\btiles?\b', text_lower) and
+        re.search(r'\b(footpath|footpaths|pavement|pavements|walkway|walkways|sidewalk|sidewalks|pedestrian|paver|pavers|curb|kerb)\b', text_lower)
+    )
+
+    if not has_pothole_or_crater and not is_garbage and not is_encroachment and (has_footpath_keyword or has_footpath_tile):
         return {
             "category_name": "Broken Footpaths & Walkways",
             "agency": "BBMP",
@@ -532,7 +585,17 @@ def resolve_department_routing(
             "needs_manual_review": False,
             "routing_reason": "Public toilet / sanitation amenity routed to BBMP."
         }
-    if any(w in text_lower for w in ["stray dog", "dog bite", "dead animal carcass", "animal removal"]):
+    # Live Stray Animals / Animal Control (BBMP)
+    # Must require animals to be the MAIN subject (dog bites, attacking/chasing, stray dog menace, cattle on road).
+    # If solid waste / garbage dumping is reported, waste clearance takes priority.
+    is_stray_menace = any(w in text_lower for w in [
+        "dog bite", "dog bites", "bitten by dog", "rabid", "rabies",
+        "stray dog menace", "dogs chasing", "chasing and biting", "dogs attacking", "dog attack",
+        "aggressive dog", "pack of dogs", "animal control team", "dog catching", "catch the dogs",
+        "catch the stray", "stray cattle", "cows on road", "cattle blocking", "stray cow", "monkeys menace", "monkey menace"
+    ])
+    is_generic_stray = any(w in text_lower for w in ["stray dog", "stray dogs", "stray animal", "stray animals", "animal removal"])
+    if (is_stray_menace or is_generic_stray) and not is_garbage:
         return {
             "category_name": "Stray Animal & Dead Animal Removal",
             "agency": "BBMP",
@@ -541,7 +604,7 @@ def resolve_department_routing(
             "coordination_reason": None,
             "is_conflict": False,
             "needs_manual_review": False,
-            "routing_reason": "Stray animal menace / animal removal routed to BBMP Animal Control."
+            "routing_reason": "Stray animal menace / live animal control routed to BBMP Animal Husbandry."
         }
     if any(w in text_lower for w in ["encroachment", "vendors blocking", "illegal shop", "footpath blocked"]):
         return {
@@ -556,16 +619,92 @@ def resolve_department_routing(
         }
 
     # ─────────────────────────────────────────────────────────────────────────
-    # 9. Core BBMP Roads & Potholes
+    # 9. Core BWSSB Drinking Water & Pipelines
+    # Water supply, pipe burst, and leakage terms take priority as primary utility emergencies
+    # ─────────────────────────────────────────────────────────────────────────
+    is_water_quality = any(w in text_lower for w in [
+        "dirty water", "contaminated", "contamination", "muddy water from tap", "discoloured", "discolored",
+        "bad taste water", "smelly water", "mud in water", "contaminated drinking water"
+    ])
+    is_water_leak = (
+        any(w in text_lower for w in [
+            "pipeline burst", "pipe burst", "pipe leak", "pipeline leak", "water pipe burst",
+            "pipeline leakage", "water main leak", "water main burst", "pipe leakage",
+            "water leaking", "leakage in pipe", "burst pipe", "broken water pipe", "water pipeline",
+            "pipe has burst", "pipeline has burst"
+        ]) or (
+            ("pipeline" in text_lower or "pipe" in text_lower) and
+            any(w in text_lower for w in ["burst", "leak", "leaking", "leakage", "gushing", "rupture", "ruptured", "repair the pipe"])
+        ) or (
+            "drinking water" in text_lower and any(w in text_lower for w in ["gushing", "wasted", "leak", "burst"])
+        )
+    )
+    is_water_supply = any(w in text_lower for w in [
+        "no water supply", "water not coming", "dry tap", "drinking water",
+        "low water pressure", "neeru barthilla", "kaveri water", "water shortage"
+    ]) and not any(w in text_lower for w in ["pothole", "potholes", "crater", "craters", "gundi"])
+    is_water_billing = any(w in text_lower for w in ["water bill", "water meter", "rr number"])
+
+    if is_water_quality:
+        return {
+            "category_name": "Contaminated Drinking Water",
+            "agency": "BWSSB",
+            "confidence": 0.98,
+            "secondary_agency": None,
+            "coordination_reason": None,
+            "is_conflict": False,
+            "needs_manual_review": False,
+            "routing_reason": "Contaminated drinking water quality routed to BWSSB."
+        }
+    if is_water_leak:
+        return {
+            "category_name": "Water Pipeline Burst & Leakage",
+            "agency": "BWSSB",
+            "confidence": 0.98,
+            "secondary_agency": "BBMP" if "road" in text_lower else None,
+            "coordination_reason": SECONDARY_COORDINATION_RULES["pipe_burst_road_damage"]["reason"] if "road" in text_lower else None,
+            "is_conflict": False,
+            "needs_manual_review": False,
+            "routing_reason": "Water pipeline burst / leakage routed to BWSSB."
+        }
+    if is_water_supply:
+        cat = "Low Water Pressure" if any(w in text_lower for w in ["low", "pressure", "slow"]) else "No Water Supply"
+        return {
+            "category_name": cat,
+            "agency": "BWSSB",
+            "confidence": 0.96,
+            "secondary_agency": None,
+            "coordination_reason": None,
+            "is_conflict": False,
+            "needs_manual_review": False,
+            "routing_reason": "Drinking water supply disruption routed to BWSSB."
+        }
+    if is_water_billing:
+        return {
+            "category_name": "Water Meter & Tanker Issues",
+            "agency": "BWSSB",
+            "confidence": 0.95,
+            "secondary_agency": None,
+            "coordination_reason": None,
+            "is_conflict": False,
+            "needs_manual_review": False,
+            "routing_reason": "Water meter / billing issue routed to BWSSB."
+        }
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # 10. Core BBMP Roads & Potholes
+    # Requires real road-damage evidence; generic road mentions do not hijack other utility issues.
     # ─────────────────────────────────────────────────────────────────────────
     is_pothole = any(w in text_lower for w in [
         "pothole", "potholes", "gundi", "gundigalu", "crater", "craters", "road pit", "road hole",
-        "broken asphalt", "road cracks", "road damage", "road repair",
-        "damaged road", "fill pothole", "pothole na", "bad road", "road broken",
-        "pothole aagide", "asphalt damaged", "tar road", "uneven road"
-    ]) or ("road" in text_lower and any(w in text_lower for w in [
-        "damage", "repair", "broken", "cave", "hole", "crater", "asphalt", "fill", "mg road", "severe", "danger", "hazard", "two-wheeler", "vehicles"
-    ]))
+        "broken asphalt", "road cracks", "road damage", "damaged road", "fill pothole",
+        "pothole na", "bad road", "road broken", "pothole aagide", "asphalt damaged",
+        "tar road damaged", "uneven road", "road crater", "crater on road", "hole in road",
+        "road sinkhole"
+    ]) or any(p in text_lower for p in [
+        "repair the road", "repair road", "road repair", "fix the road", "asphalt the road",
+        "road is damaged", "road is broken", "damage to the road", "road surface damaged"
+    ])
     if is_pothole:
         return {
             "category_name": "Potholes & Damaged Roads",
@@ -579,15 +718,16 @@ def resolve_department_routing(
         }
 
     # ─────────────────────────────────────────────────────────────────────────
-    # 9. Core BSWML Solid Waste Management
+    # 11. Core BSWML Solid Waste Management
     # ─────────────────────────────────────────────────────────────────────────
     is_garbage = any(w in text_lower for w in [
         "garbage", "trash", "waste", "kachra", "kasa", "dustbin", "waste collection",
-        "illegal dumping", "dumping", "sweeping", "segregation", "black spot", "blackspot",
-        "auto tipper", "bswml", "solid waste", "litter"
+        "illegal dumping", "dumping", "dumped", "sweeping", "segregation", "black spot", "blackspot",
+        "auto tipper", "bswml", "solid waste", "litter", "food scraps", "plastic waste",
+        "food waste", "vegetable waste"
     ])
     if is_garbage:
-        if any(w in text_lower for w in ["burn", "smoke", "fire", "plastic"]):
+        if any(w in text_lower for w in ["burn", "burning", "burnt", "smoke", "fire", "fumes", "setting fire"]):
             cat = "Garbage Burning & Air Pollution"
             conf = 0.98
         elif any(w in text_lower for w in ["not collected", "missed", "van not", "auto tipper"]):
@@ -599,7 +739,7 @@ def resolve_department_routing(
         elif any(w in text_lower for w in ["segregat", "wet", "dry"]):
             cat = "Wet & Dry Waste Segregation Issues"
             conf = 0.95
-        elif any(w in text_lower for w in ["dump", "roadside", "empty plot", "vacant"]):
+        elif any(w in text_lower for w in ["dump", "dumped", "dumping", "roadside", "empty plot", "vacant plot", "plot"]):
             cat = "Illegal Roadside Waste Dumping"
             conf = 0.96
         else:
@@ -617,7 +757,7 @@ def resolve_department_routing(
         }
 
     # ─────────────────────────────────────────────────────────────────────────
-    # 10. Core BESCOM Electrical Grid & Power
+    # 12. Core BESCOM Electrical Grid & Power
     # ─────────────────────────────────────────────────────────────────────────
     is_power = any(w in text_lower for w in [
         "power cut", "power outage", "blackout", "no current", "current illa",
@@ -684,68 +824,6 @@ def resolve_department_routing(
             "is_conflict": False,
             "needs_manual_review": False,
             "routing_reason": "Electricity meter / billing dispute routed to BESCOM."
-        }
-
-    # ─────────────────────────────────────────────────────────────────────────
-    # 11. Core BWSSB Drinking Water & Pipelines
-    # ─────────────────────────────────────────────────────────────────────────
-    is_water_quality = any(w in text_lower for w in [
-        "dirty water", "contaminated", "contamination", "muddy", "discoloured", "discolored",
-        "bad taste water", "smelly water", "mud in water"
-    ])
-    is_water_leak = any(w in text_lower for w in [
-        "pipeline burst", "pipe leak", "water pipe burst", "pipeline leakage", "water main leak"
-    ])
-    is_water_supply = any(w in text_lower for w in [
-        "no water supply", "water not coming", "dry tap", "drinking water",
-        "low water pressure", "neeru barthilla", "kaveri water", "water shortage"
-    ])
-    is_water_billing = any(w in text_lower for w in ["water bill", "water meter", "rr number"])
-
-    if is_water_quality:
-        return {
-            "category_name": "Contaminated Drinking Water",
-            "agency": "BWSSB",
-            "confidence": 0.98,
-            "secondary_agency": None,
-            "coordination_reason": None,
-            "is_conflict": False,
-            "needs_manual_review": False,
-            "routing_reason": "Contaminated drinking water quality routed to BWSSB."
-        }
-    if is_water_leak:
-        return {
-            "category_name": "Water Pipeline Burst & Leakage",
-            "agency": "BWSSB",
-            "confidence": 0.98,
-            "secondary_agency": "BBMP" if "road" in text_lower else None,
-            "coordination_reason": SECONDARY_COORDINATION_RULES["pipe_burst_road_damage"]["reason"] if "road" in text_lower else None,
-            "is_conflict": False,
-            "needs_manual_review": False,
-            "routing_reason": "Water pipeline burst / leakage routed to BWSSB."
-        }
-    if is_water_supply:
-        cat = "Low Water Pressure" if any(w in text_lower for w in ["low", "pressure", "slow"]) else "No Water Supply"
-        return {
-            "category_name": cat,
-            "agency": "BWSSB",
-            "confidence": 0.96,
-            "secondary_agency": None,
-            "coordination_reason": None,
-            "is_conflict": False,
-            "needs_manual_review": False,
-            "routing_reason": "Drinking water supply disruption routed to BWSSB."
-        }
-    if is_water_billing:
-        return {
-            "category_name": "Water Meter & Tanker Issues",
-            "agency": "BWSSB",
-            "confidence": 0.95,
-            "secondary_agency": None,
-            "coordination_reason": None,
-            "is_conflict": False,
-            "needs_manual_review": False,
-            "routing_reason": "Water meter / billing issue routed to BWSSB."
         }
 
 

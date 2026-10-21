@@ -39,6 +39,7 @@ from backend.app.services.duplicate import check_duplicate_complaint, haversine_
 from backend.app.core.database import SessionLocal
 from backend.app.models.complaint import Complaint, ComplaintCategory, ComplaintImage, ComplaintStatusHistory
 from backend.app.models.user import User
+from backend.test_helpers import generate_test_image, cleanup_temp_images
 
 def test_1_yolo_model_loading():
     print("\n[TEST 1] CivicAI_YOLO11n_best.pt Model Loading & Civic Hazard Classes...")
@@ -100,19 +101,35 @@ def test_3_officer_resolution_validation():
     # Indoor device screen test (should fail verification and flag for manual review)
     # We simulate by checking indoor/mismatch handling
     from unittest.mock import patch
+    import tempfile
+    import numpy as np
+    try:
+        import cv2
+    except ImportError:
+        cv2 = None
 
-    with patch("backend.app.services.evidence.run_yolo_detection") as mock_yolo:
-        # Case A: Officer uploads a laptop/phone screenshot as proof
-        mock_yolo.return_value = {
-            "detected_objects": ["laptop", "mouse"],
-            "bounding_boxes": [],
-            "confidence_scores": {},
-            "has_civic_objects": False,
-            "is_indoor_device": True,
-        }
-        with patch("os.path.exists", return_value=True):
+    # Create dummy image on disk for quality check using absolute path
+    test_dir = os.path.dirname(os.path.abspath(__file__))
+    dummy_img_path = os.path.join(test_dir, "dummy_resolution.jpg")
+    img_data = np.random.randint(60, 190, (200, 200, 3), dtype=np.uint8)
+    if cv2 is not None:
+        cv2.imwrite(dummy_img_path, img_data)
+    else:
+        from PIL import Image as PILImage
+        PILImage.fromarray(img_data).save(dummy_img_path)
+
+    try:
+        with patch("backend.app.services.evidence.run_yolo_detection") as mock_yolo:
+            # Case A: Officer uploads a laptop/phone screenshot as proof
+            mock_yolo.return_value = {
+                "detected_objects": ["laptop", "mouse"],
+                "bounding_boxes": [],
+                "confidence_scores": {},
+                "has_civic_objects": False,
+                "is_indoor_device": True,
+            }
             is_ver, conf, q_stat, details = verify_resolution_evidence(
-                image_path="dummy_resolution.jpg",
+                image_path=dummy_img_path,
                 category_name="Potholes & Damaged Roads",
                 resolution_remarks="Road was asphalted and pothole filled completely with bitumen mix.",
                 complaint_description="Large pothole"
@@ -121,17 +138,16 @@ def test_3_officer_resolution_validation():
             assert q_stat == "INDOOR_DEVICE_MISMATCH"
             print(f"  ✓ Indoor resolution screenshot rejected: is_verified={is_ver}, status={q_stat}")
 
-        # Case B: Officer uploads garbage photo for a streetlight repair
-        mock_yolo.return_value = {
-            "detected_objects": ["garbage"],
-            "bounding_boxes": [],
-            "confidence_scores": {},
-            "has_civic_objects": True,
-            "is_indoor_device": False,
-        }
-        with patch("os.path.exists", return_value=True):
+            # Case B: Officer uploads garbage photo for a streetlight repair
+            mock_yolo.return_value = {
+                "detected_objects": ["garbage"],
+                "bounding_boxes": [],
+                "confidence_scores": {},
+                "has_civic_objects": True,
+                "is_indoor_device": False,
+            }
             is_ver, conf, q_stat, details = verify_resolution_evidence(
-                image_path="dummy_resolution.jpg",
+                image_path=dummy_img_path,
                 category_name="Streetlights & Street Infrastructure",
                 resolution_remarks="Replaced the burnt bulb and restored illumination to the entire stretch.",
                 complaint_description="Dark street light"
@@ -140,17 +156,16 @@ def test_3_officer_resolution_validation():
             assert q_stat == "MISMATCH_MANUAL_REVIEW"
             print(f"  ✓ Conflicting resolution proof flagged for manual review: is_verified={is_ver}, status={q_stat}")
 
-        # Case C: Valid matching resolution proof
-        mock_yolo.return_value = {
-            "detected_objects": ["streetlight"],
-            "bounding_boxes": [],
-            "confidence_scores": {"streetlight": 0.92},
-            "has_civic_objects": True,
-            "is_indoor_device": False,
-        }
-        with patch("os.path.exists", return_value=True):
+            # Case C: Valid matching resolution proof
+            mock_yolo.return_value = {
+                "detected_objects": ["streetlight"],
+                "bounding_boxes": [],
+                "confidence_scores": {"streetlight": 0.92},
+                "has_civic_objects": True,
+                "is_indoor_device": False,
+            }
             is_ver, conf, q_stat, details = verify_resolution_evidence(
-                image_path="dummy_resolution.jpg",
+                image_path=dummy_img_path,
                 category_name="Streetlights & Street Infrastructure",
                 resolution_remarks="Replaced the burnt bulb and restored illumination to the entire stretch.",
                 complaint_description="Dark street light"
@@ -158,33 +173,62 @@ def test_3_officer_resolution_validation():
             assert is_ver is True, "Valid matching resolution proof should be verified!"
             assert q_stat == "PASS"
             print(f"  ✓ Valid resolution proof successfully verified: is_verified={is_ver}, confidence={conf}")
+    finally:
+        if os.path.exists(dummy_img_path):
+            try:
+                os.remove(dummy_img_path)
+            except OSError:
+                pass
 
 def test_4_multi_factor_duplicate_detection():
     print("\n[TEST 4] Multi-Factor Duplicate Detection & Conflict Flagging...")
     db = SessionLocal()
     try:
+        from unittest.mock import patch, MagicMock
+
         # Get or create an active parent complaint in category 1 (Potholes)
         cat = db.query(ComplaintCategory).first()
         cat_id = cat.id if cat else 1
 
-        # Check Scenario A: Same incident (Close distance 25m, similar text, matching context)
-        # We test with check_duplicate_complaint
-        is_dup, dup_id, score, flag, details = check_duplicate_complaint(
-            db=db,
-            latitude=12.971598,
-            longitude=77.594562,
-            description="Deep pothole on MG road creating severe traffic block near brigade junction",
-            category_id=cat_id,
-            distance_threshold_m=100.0,
-            similarity_threshold=0.85,
-            perceptual_hash="1122334455667788",
-            return_details=True
-        )
-        print(f"  - Duplicate check result: is_dup={is_dup}, dup_id={dup_id}, score={round(score, 2)}, flag={flag}")
+        # Check Scenario A: Same incident (Close distance ~25m, similar text, matching context)
+        # Hermetic: uses a mocked parent candidate instead of querying live DB
+        mock_parent = MagicMock()
+        mock_parent.id = 501
+        mock_parent.category_id = cat_id
+        mock_parent.location_latitude = 12.971598 + 0.0002  # ~22m away
+        mock_parent.location_longitude = 77.594562 + 0.0001
+        mock_parent.description = "Deep pothole on MG road creating severe traffic block near brigade junction"
+        mock_parent.original_description = mock_parent.description
+        mock_parent.status = "In Progress"
+        mock_parent.duplicate_of_complaint_id = None
+        mock_parent_img = MagicMock()
+        mock_parent_img.perceptual_hash = "1122334455667788"
+        mock_parent.images = [mock_parent_img]
+
+        with patch.object(db, "query") as mock_q_a:
+            mock_filter_a = MagicMock()
+            mock_filter_a.filter.return_value.all.return_value = [mock_parent]
+            mock_q_a.return_value = mock_filter_a
+
+            is_dup, dup_id, score, flag, details = check_duplicate_complaint(
+                db=db,
+                latitude=12.971598,
+                longitude=77.594562,
+                description="Deep pothole on MG road creating severe traffic block near brigade junction",
+                category_id=cat_id,
+                distance_threshold_m=100.0,
+                similarity_threshold=0.85,
+                perceptual_hash="1122334455667788",
+                return_details=True
+            )
+            assert is_dup is True, f"Expected duplicate detected for identical nearby complaint, got is_dup={is_dup}"
+            assert dup_id == 501, f"Expected auto-link to candidate ID 501, got {dup_id}"
+            assert score >= 0.85, f"Expected similarity score >= 0.85, got {score}"
+            assert flag == "COMBINED_MATCH", f"Expected flag COMBINED_MATCH, got {flag}"
+            print(f"  ✓ Hermetic duplicate check result: is_dup={is_dup}, dup_id={dup_id}, score={round(score, 2)}, flag={flag}")
 
         # Check Scenario B: Conflict handling
         # Image matches an existing complaint pHash, but location is 5km away (distant conflict)
-        from unittest.mock import MagicMock
         mock_cand = MagicMock()
         mock_cand.id = 999
         mock_cand.category_id = cat_id
@@ -226,10 +270,11 @@ def test_4_multi_factor_duplicate_detection():
 def test_5_fraud_detection_separation():
     print("\n[TEST 5] Fraud Detection Separation (Reused image alone must NOT classify as SUSPICIOUS)...")
     db = SessionLocal()
+    real_img_path = generate_test_image(seed=555)
     try:
         now_utc = datetime.now(timezone.utc)
         
-        # Test reused image gate decision with clean matching GPS
+        # Test reused image gate decision with clean matching GPS and real image on disk
         from unittest.mock import patch, MagicMock
         with patch.object(db, "query") as mock_q:
             mock_existing_img = MagicMock()
@@ -237,26 +282,46 @@ def test_5_fraud_detection_separation():
             mock_existing_img.perceptual_hash = "ffff0000ffff0000"
             mock_q.return_value.filter.return_value.all.return_value = [mock_existing_img]
 
-            with patch("backend.app.services.evidence.compute_perceptual_hash", return_value="ffff0000ffff0000"):
-                with patch("os.path.exists", return_value=True):
-                    res = compute_evidence_trust(
-                        live_lat=12.971598,
-                        live_lon=77.594562,
-                        image_path="test_image.jpg",
-                        category_name="Potholes & Damaged Roads",
-                        complaint_description="Pothole on main road",
-                        submission_timestamp=now_utc,
-                        db=db,
-                    )
-                    assert res["is_reused_image"] is True
-                    assert res["reused_complaint_id"] == 123
-                    # Critical Requirement 5: Reused image alone must NOT be SUSPICIOUS!
-                    assert res["verification_decision"] != "SUSPICIOUS", "Violation: Reused image alone was marked SUSPICIOUS!"
-                    assert res["verification_decision"] == "MANUAL_REVIEW", f"Expected MANUAL_REVIEW, got {res['verification_decision']}"
-                    print(f"  ✓ Reused image decision: '{res['verification_decision']}' (NOT classified as SUSPICIOUS)")
+            with patch("backend.app.services.evidence.compute_perceptual_hash", return_value="ffff0000ffff0000"), \
+                 patch("backend.app.services.evidence.evaluate_semantic_match", return_value=(
+                     "MATCH", 0.95, "Potholes & Damaged Roads", "Civic AI model confirmed road damage/pothole directly matching complaint."
+                 )):
+                res = compute_evidence_trust(
+                    live_lat=12.971598,
+                    live_lon=77.594562,
+                    image_path=real_img_path,
+                    category_name="Potholes & Damaged Roads",
+                    complaint_description="Pothole on main road",
+                    submission_timestamp=now_utc,
+                    db=db,
+                )
+                assert res["is_reused_image"] is True
+                assert res["reused_complaint_id"] == 123
+                # Critical Requirement 5: Reused image alone must NOT be SUSPICIOUS!
+                assert res["verification_decision"] != "SUSPICIOUS", "Violation: Reused image alone was marked SUSPICIOUS!"
+                assert res["verification_decision"] == "MANUAL_REVIEW", f"Expected MANUAL_REVIEW, got {res['verification_decision']}"
+
+                # Strengthened assertions:
+                # 1. Image quality check must NOT be UNREADABLE
+                assert res["quality_check"] != "UNREADABLE", f"Quality check failed: {res.get('quality_check')}"
+                assert res["quality_check"] == "PASS", f"Expected quality_check PASS, got {res.get('quality_check')}"
+
+                # 2. Gate reasons & details must explicitly reference duplicate/reused image from Complaint #123
+                gate_reasons_str = res.get("gate_reasons") or ""
+                assert "Duplicate Image: This photo was already submitted for Complaint #123." in gate_reasons_str, (
+                    f"Expected duplicate image gate reason, got: {gate_reasons_str}"
+                )
+                assert "Duplicate image detected (reused from Complaint #123)" in res.get("verification_details", ""), (
+                    f"Expected verification_details to reference reused image, got: {res.get('verification_details')}"
+                )
+
+                print(f"  ✓ Reused image decision: '{res['verification_decision']}' (NOT classified as SUSPICIOUS)")
+                print(f"  ✓ Quality check passed: {res['quality_check']}")
+                print(f"  ✓ Gate reason verified: {gate_reasons_str}")
 
     finally:
         db.close()
+        cleanup_temp_images(real_img_path)
 
 def run_all_tests():
     print("=" * 75)

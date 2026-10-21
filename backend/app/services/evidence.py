@@ -16,9 +16,12 @@ import os
 import math
 import json
 import uuid
+import logging
 from datetime import datetime, timezone
 from typing import Optional, Dict, Any, Tuple, List
 from sqlalchemy.orm import Session
+
+logger = logging.getLogger(__name__)
 
 # Pillow for EXIF extraction & image processing
 try:
@@ -380,6 +383,156 @@ def _haversine(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Helper: Gemini Vision Prompt Builder & Token Parser
+# ─────────────────────────────────────────────────────────────────────────────
+def build_gemini_vision_prompt(category_name: str, complaint_text: str) -> str:
+    """
+    Builds the Gemini Vision prompt focusing solely on the civic issue type.
+    Instructs the model to completely ignore geographic context, country, city,
+    landmarks, vehicles, and style, as location is verified separately via GPS/EXIF.
+    """
+    return (
+        f"You are a civic issue visual validator.\n"
+        f"A citizen reported a civic issue under Category: '{category_name}', Description: '{complaint_text}'.\n\n"
+        f"Your task is to verify ONLY whether the image depicts the TYPE of civic issue described "
+        f"(e.g. water leak or pipe burst, pothole, damaged road, garbage pile, streetlight, sewage overflow).\n\n"
+        f"CRITICAL INSTRUCTIONS:\n"
+        f"1. Decide ONLY whether the image shows the TYPE of civic issue in the complaint category.\n"
+        f"2. You MUST explicitly IGNORE the location, country, city, street name, landmarks, vehicles, "
+        f"license plates, signage, language, photo style or quality, and whether the place looks like Bengaluru or India.\n"
+        f"3. NEVER reject or mark MISMATCH because the location cannot be confirmed from the picture. "
+        f"Location verification is handled independently by GPS and EXIF gates.\n\n"
+        f"Respond with exactly one of: MATCH, PARTIAL_MATCH, MISMATCH, followed by a colon and a 1-sentence reason."
+    )
+
+
+def parse_gemini_vision_response(raw_text: str, category_name: str) -> Optional[Tuple[str, float, str, str]]:
+    """
+    Parses Gemini Vision's verdict with strict exact-token priority:
+      1. MISMATCH       -> ("MISMATCH", 0.92, "Unrelated Subject", details)
+      2. PARTIAL_MATCH  -> ("PARTIAL_MATCH", 0.70, category_name, details)
+      3. MATCH          -> ("MATCH", 0.94, category_name, details)
+    Ensures PARTIAL_MATCH is never substring-matched as MATCH.
+    """
+    raw_resp = (raw_text or "").strip()
+    if not raw_resp:
+        return None
+
+    first_line = raw_resp.splitlines()[0] if raw_resp else ""
+    first_token = first_line.split(":")[0].strip().replace("*", "").replace("#", "").upper()
+    upper_resp = raw_resp.upper()
+
+    # 1. Exact-token check: MISMATCH first
+    if first_token == "MISMATCH" or first_line.upper().startswith("MISMATCH") or (
+        upper_resp.startswith("MISMATCH") or ("MISMATCH" in upper_resp and "PARTIAL_MATCH" not in upper_resp and first_token != "MATCH")
+    ):
+        return "MISMATCH", 0.92, "Unrelated Subject", f"Gemini Vision detected mismatch: {raw_resp}"
+
+    # 2. Exact-token check: PARTIAL_MATCH second (must precede MATCH check)
+    if first_token == "PARTIAL_MATCH" or first_line.upper().startswith("PARTIAL_MATCH") or (
+        upper_resp.startswith("PARTIAL_MATCH") or "PARTIAL_MATCH" in upper_resp
+    ):
+        return "PARTIAL_MATCH", 0.70, category_name, f"Gemini Vision verified partial match: {raw_resp}"
+
+    # 3. Exact-token check: MATCH third
+    if first_token == "MATCH" or first_line.upper().startswith("MATCH") or (
+        upper_resp.startswith("MATCH") or "MATCH" in upper_resp
+    ):
+        return "MATCH", 0.94, category_name, f"Gemini Vision verified category match: {raw_resp}"
+
+    return None
+
+
+def clean_gate_reasons(gr: Any) -> List[str]:
+    """
+    Recursively unwraps and cleans gate reasons from lists, JSON strings,
+    double-encoded JSON strings, or Python repr/str(list) representations
+    into a clean list of individual human-readable reason strings.
+    Guarantees no raw brackets or list-formatting quotes remain.
+    """
+    if gr is None:
+        return []
+
+    # If it is a string, attempt multiple passes of json.loads to unwrap nested JSON
+    if isinstance(gr, str):
+        gr_str = gr.strip()
+        if not gr_str:
+            return []
+
+        for _ in range(3):
+            if (gr_str.startswith('[') and gr_str.endswith(']')) or (gr_str.startswith('"') and gr_str.endswith('"')):
+                try:
+                    parsed = json.loads(gr_str)
+                    if isinstance(parsed, (list, str)):
+                        gr_str = parsed
+                        if isinstance(gr_str, list):
+                            break
+                    else:
+                        break
+                except Exception:
+                    break
+            else:
+                break
+
+        if isinstance(gr_str, list):
+            items = gr_str
+        elif isinstance(gr_str, str):
+            # If still has stringified list like ["..."] or ['...']
+            if gr_str.startswith('[') and gr_str.endswith(']'):
+                inner = gr_str[1:-1].strip()
+                import re
+                raw_items = re.split(r'\s*,\s*(?=["\'])', inner)
+                items = [it.strip('"\' ') for it in raw_items if it.strip('"\' ')]
+            else:
+                items = [gr_str]
+        else:
+            items = [str(gr_str)]
+    elif isinstance(gr, (list, tuple, set)):
+        items = list(gr)
+    else:
+        items = [str(gr)]
+
+    # Final pass: clean each item individually
+    cleaned: List[str] = []
+    for item in items:
+        if isinstance(item, (list, tuple)):
+            cleaned.extend(clean_gate_reasons(item))
+        elif isinstance(item, str):
+            s = item.strip()
+            # If an item still looks like a stringified list
+            if s.startswith('[') and s.endswith(']'):
+                cleaned.extend(clean_gate_reasons(s))
+            else:
+                # Strip any accidental wrapping quotes or brackets
+                if (s.startswith('"') and s.endswith('"')) or (s.startswith("'") and s.endswith("'")):
+                    s = s[1:-1].strip()
+                s = s.strip("[]").strip()
+                if (s.startswith('"') and s.endswith('"')) or (s.startswith("'") and s.endswith("'")):
+                    s = s[1:-1].strip()
+                if s:
+                    cleaned.append(s)
+        else:
+            cleaned.append(str(item).strip())
+
+    return cleaned
+
+
+def format_manual_review_remark(gr: Any, prefix: str = "Complaint registered and flagged for manual review: ") -> str:
+    """
+    Formats gate reasons into a single clean English sentence for ComplaintStatusHistory remarks.
+    Multiple reasons are joined with '; '.
+    Guarantees no '[', ']', or list-formatting quotes.
+    """
+    reasons = clean_gate_reasons(gr)
+    if not reasons:
+        return f"{prefix}Evidence verification requires manual officer inspection."
+
+    clean_items = [r.rstrip('.') for r in reasons if r]
+    joined = "; ".join(clean_items)
+    return f"{prefix}{joined}."
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Gate 3: Semantic Complaint ↔ Image Matching (NLP + Vision)
 # ─────────────────────────────────────────────────────────────────────────────
 def evaluate_semantic_match(
@@ -451,6 +604,22 @@ def evaluate_semantic_match(
     if is_garbage_complaint and (is_pothole_img_hint or has_road_damage_objects) and not (is_garbage_img_hint or has_garbage_objects):
         return "MISMATCH", 0.95, "Road Damage / Pothole", "Image depicts road damage/potholes, but complaint is for garbage/waste."
 
+    # 5. Water / Sewage complaint with pothole/road damage photo -> Hard Mismatch
+    if is_water_complaint and (is_pothole_img_hint or has_road_damage_objects) and not (bool(detected_set & {"water_leak", "pipe", "drain"})):
+        return "MISMATCH", 0.95, "Potholes & Damaged Roads", "Image depicts road damage/pothole, but complaint is for water supply/pipeline/sewage."
+
+    # 6. Water / Sewage complaint with garbage photo -> Hard Mismatch
+    if is_water_complaint and (is_garbage_img_hint or has_garbage_objects) and not (bool(detected_set & {"water_leak", "pipe", "drain"})):
+        return "MISMATCH", 0.95, "Garbage / Solid Waste", "Image depicts solid waste/garbage, but complaint is for water supply/pipeline/sewage."
+
+    # 7. Road / Pothole complaint with water leak photo -> Hard Mismatch
+    if is_pothole_complaint and ("water_leak" in detected_set) and not (has_road_damage_objects or is_pothole_img_hint):
+        return "MISMATCH", 0.95, "Water Pipeline Burst & Leakage", "Image depicts water leak/pipe burst, but complaint is for road damage/potholes."
+
+    # 8. Garbage complaint with water leak photo -> Hard Mismatch
+    if is_garbage_complaint and ("water_leak" in detected_set) and not (has_garbage_objects or is_garbage_img_hint):
+        return "MISMATCH", 0.95, "Water Pipeline Burst & Leakage", "Image depicts water leak/pipe burst, but complaint is for garbage/waste."
+
     # Direct Civic Hazard Positive Matches (CivicAI_YOLO11n_best.pt)
     if is_pothole_complaint and (has_road_damage_objects or bool(detected_set & {"pothole", "road_crack", "damaged_road_sign"})):
         return "MATCH", 0.95, "Potholes & Damaged Roads", "Civic AI model confirmed road damage/pothole directly matching complaint."
@@ -485,23 +654,19 @@ def evaluate_semantic_match(
         try:
             import google.generativeai as genai
             genai.configure(api_key=gemini_key)
-            model = genai.GenerativeModel("gemini-1.5-flash")
+            model_name = getattr(settings, "GEMINI_MODEL", "gemini-flash-latest")
+            model = genai.GenerativeModel(model_name)
             with PILImage.open(image_path) as pimg:
-                prompt = (
-                    f"You are a civic grievance verification auditor in Karnataka. "
-                    f"A citizen filed a complaint under Category: '{category_name}', Description: '{complaint_text}'. "
-                    f"Look at the image. Does this image depict the civic grievance or a plausible scene of this issue? "
-                    f"Respond in one word: MATCH, PARTIAL_MATCH, or MISMATCH, followed by a colon and 1-sentence reason."
-                )
+                prompt = build_gemini_vision_prompt(category_name, complaint_text)
                 response = model.generate_content([prompt, pimg])
-                text_resp = response.text.strip().upper()
-                if "MISMATCH" in text_resp:
-                    return "MISMATCH", 0.92, "Unrelated Subject", f"Gemini Vision detected mismatch: {response.text.strip()}"
-                elif "MATCH" in text_resp:
-                    return "MATCH", 0.94, category_name, f"Gemini Vision verified category match: {response.text.strip()}"
+                parsed = parse_gemini_vision_response(response.text, category_name)
+                if parsed:
+                    return parsed
         except Exception as e:
             # Non-blocking: fallback to local SentenceTransformers
-            print("Gemini Vision check skipped/failed:", e)
+            clean_err = str(e).replace(gemini_key, "[REDACTED]")
+            logger.warning("WARNING: Gemini Vision check skipped/failed (%s). Image verification running WITHOUT Gemini Vision fallback.", clean_err)
+            print(f"WARNING: Gemini Vision check skipped/failed ({clean_err}). Image verification running WITHOUT Gemini Vision.")
 
     # Heuristic matching using YOLO objects + NLP
     if not detected_objects:

@@ -57,6 +57,18 @@ def hamming_distance(h1: Optional[str], h2: Optional[str]) -> int:
     except Exception:
         return 64
 
+def compute_image_score(hamming_dist: Optional[int], desc_score: float) -> float:
+    """
+    Computes photo evidence score for duplicate detection:
+      - If hash difference is small (identical/near-identical), hash_based_score boosts the score.
+      - If hash difference is large (different photo) or missing, photo evidence is neutral (desc_score).
+      - Photo evidence is strictly positive-only and never penalizes the combined score.
+    """
+    if hamming_dist is None:
+        return desc_score
+    hash_based_score = max(0.0, 1.0 - (hamming_dist / 16.0))
+    return max(hash_based_score, desc_score)
+
 def check_duplicate_complaint(
     db: Session,
     latitude: float,
@@ -170,7 +182,7 @@ def check_duplicate_complaint(
         if perceptual_hash and cand_hashes:
             min_hdist = min(hamming_distance(perceptual_hash, ch) for ch in cand_hashes)
             img_identical = (min_hdist <= 6)
-            img_score = max(0.0, 1.0 - (min_hdist / 16.0))
+            img_score = compute_image_score(min_hdist, desc_score)
 
         # D. Conflict Check (Requirement 3 & 5):
         # If image matches but description or location conflicts, flag for manual review

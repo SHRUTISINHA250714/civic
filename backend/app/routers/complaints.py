@@ -3,7 +3,9 @@ import re
 import io
 import uuid
 import shutil
-from typing import List, Optional
+import json
+from datetime import datetime
+from typing import List, Optional, Tuple, Dict, Set
 from PIL import Image
 from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, Form
 from sqlalchemy.orm import Session, joinedload, selectinload
@@ -27,9 +29,171 @@ from backend.app.services import (
     verify_image, get_detected_objects, transcribe_audio,
     check_duplicate_complaint, assign_officer_to_complaint,
     compute_evidence_trust, compute_sla_deadline, compute_response_sla_deadline,
-    compute_resolution_sla_deadline, get_sla_summary, verify_resolution_evidence
+    compute_resolution_sla_deadline, get_sla_summary, verify_resolution_evidence,
+    format_manual_review_remark
 )
 from backend.app.services.duplicate import haversine_distance
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Cross-Department Evidence Conflict Detection
+# ─────────────────────────────────────────────────────────────────────────────
+DEPT_DEFECT_CLASSES: Dict[str, Set[str]] = {
+    "BBMP": {"pothole", "road_crack", "damaged_road_sign"},
+    "BSWML": {"garbage"},
+    "BWSSB": {"water_leak"},
+    "BESCOM": {"damaged_electrical_pole"},
+}
+
+NEUTRAL_CLASSES: Set[str] = {"streetlight", "fallen_tree", "graffiti"}
+
+CATEGORY_CONSISTENT_OBJECTS: Dict[str, Set[str]] = {
+    # BBMP Road & Footpath
+    "Potholes & Damaged Roads": {"pothole", "road_crack", "damaged_road_sign"},
+    "Pothole": {"pothole", "road_crack", "damaged_road_sign"},
+    "Road Damage": {"pothole", "road_crack", "damaged_road_sign"},
+    "Broken Footpaths & Walkways": {"road_crack", "pothole", "damaged_road_sign"},
+    "Road & Footpath Encroachment": {"damaged_road_sign", "pothole", "road_crack"},
+    "Construction Debris & Road Cave-in": {"road_crack", "pothole", "garbage"},
+
+    # BBMP Drainage & Waterbodies
+    "Blocked Stormwater Drains & Waterlogging": {"water_leak", "road_crack", "pothole", "garbage"},
+    "Lakes & Water Bodies": {"water_leak", "garbage", "fallen_tree"},
+
+    # BBMP Lighting & Trees & Parks
+    "Damaged Streetlights": {"streetlight", "damaged_electrical_pole"},
+    "Streetlight": {"streetlight", "damaged_electrical_pole"},
+    "Tree Fall & Dangerous Branches": {"fallen_tree", "damaged_electrical_pole"},
+    "Tree Fall": {"fallen_tree", "damaged_electrical_pole"},
+    "Park Maintenance & Public Gardens": {"fallen_tree", "garbage", "damaged_road_sign", "graffiti"},
+
+    # BBMP Sanitation / Animals / Amenities
+    "Public Toilet & Civic Amenities": {"water_leak", "garbage", "graffiti"},
+    "Stray Animal & Dead Animal Removal": {"garbage", "road_crack", "pothole"},
+    "Others": {"pothole", "road_crack", "garbage", "water_leak", "damaged_electrical_pole", "streetlight", "fallen_tree", "damaged_road_sign", "graffiti"},
+
+    # BESCOM Electricity & Power
+    "Power Outage & Blackout": {"damaged_electrical_pole", "streetlight", "fallen_tree"},
+    "Power Outage": {"damaged_electrical_pole", "streetlight", "fallen_tree"},
+    "Frequent Power Cuts": {"damaged_electrical_pole", "streetlight"},
+    "Voltage Fluctuation (Low/High)": {"damaged_electrical_pole"},
+    "Transformer Failure & Sparks": {"damaged_electrical_pole"},
+    "Damaged Electric Poles & Broken Wires": {"damaged_electrical_pole", "fallen_tree", "streetlight"},
+    "Exposed Wires & Electrical Hazards": {"damaged_electrical_pole", "fallen_tree", "streetlight"},
+    "Fallen Electric Wire": {"damaged_electrical_pole", "fallen_tree"},
+    "Electricity Meter & Billing Issues": {"damaged_electrical_pole"},
+    "Streetlight Power Supply Fault": {"streetlight", "damaged_electrical_pole"},
+
+    # BWSSB Water & Sewerage
+    "Water Pipeline Burst & Leakage": {"water_leak"},
+    "Water Leakage": {"water_leak"},
+    "No Water Supply": {"water_leak"},
+    "Low Water Pressure": {"water_leak"},
+    "Contaminated Drinking Water": {"water_leak"},
+    "Sewage Overflow & Gutter Water": {"water_leak", "road_crack"},
+    "Sewage Overflow": {"water_leak", "road_crack"},
+    "Blocked Sewer Line & Manhole Overflow": {"water_leak", "road_crack"},
+    "Damaged Manhole Cover & Missing Lid": {"water_leak", "pothole", "road_crack"},
+    "Water Meter & Tanker Issues": {"water_leak"},
+
+    # BSWML Solid Waste
+    "Garbage Not Collected": {"garbage"},
+    "Irregular Garbage Collection": {"garbage"},
+    "Overflowing Garbage Bins & Blackspots": {"garbage"},
+    "Illegal Roadside Waste Dumping": {"garbage"},
+    "Foul Smell & Waste Health Hazard": {"garbage"},
+    "Garbage Burning & Air Pollution": {"garbage"},
+    "Wet & Dry Waste Segregation Issues": {"garbage"},
+    "Bulk & Construction Waste Dumping": {"garbage", "road_crack"},
+    "Dead Animal Waste on Road": {"garbage"},
+    "Garbage": {"garbage"},
+    "Illegal Dumping": {"garbage"},
+}
+
+
+def detect_department_conflict(
+    text_category: str,
+    text_dept: str,
+    secondary_dept: Optional[str] = None,
+    detected_set: Optional[Set[str]] = None,
+    img_cat: str = "",
+    semantic_status: str = "MATCH"
+) -> Tuple[bool, Optional[str], Optional[str]]:
+    """
+    Evaluates whether evidence image conflicts with text-routed department.
+    Principle: flag a complaint only if NO detected object supports the text category
+    (or its secondary agency) AND at least one detected object, or a semantic MISMATCH,
+    supports a different department.
+    Text department is NEVER changed.
+    """
+    detected_set = detected_set or set()
+    det_lower = {str(o).lower() for o in detected_set}
+    img_cat_lower = (img_cat or "").lower()
+
+    # Consistent objects for this category
+    consistent_objs = set(CATEGORY_CONSISTENT_OBJECTS.get(text_category, set()))
+    consistent_objs.update(NEUTRAL_CLASSES)
+
+    # Secondary agency coordination allowances (e.g. tree on power lines, garbage in drain)
+    if secondary_dept == "BSWML" and ("drain" in text_category.lower() or "water" in text_category.lower()):
+        consistent_objs.add("garbage")
+    elif secondary_dept == "BBMP" and ("wire" in text_category.lower() or "electric" in text_category.lower() or "power" in text_category.lower()):
+        consistent_objs.add("fallen_tree")
+    elif secondary_dept == "BBMP" and "garbage" in text_category.lower():
+        consistent_objs.add("water_leak")
+
+    # Check if ANY detected object supports the text category (or its secondary agency)
+    has_supporting_object = bool(det_lower & consistent_objs)
+
+    # Identify conflicting departments from detected defect classes
+    conflicting_depts = set()
+    for dept, defect_classes in DEPT_DEFECT_CLASSES.items():
+        if dept != text_dept:
+            unaccounted = (det_lower & defect_classes) - consistent_objs
+            if unaccounted:
+                conflicting_depts.add(dept)
+
+    # Identify conflicting department from Gemini Vision semantic category
+    semantic_conflict_dept = None
+    if img_cat_lower:
+        if any(k in img_cat_lower for k in ["pothole", "road damage", "damaged road", "broken footpath", "sidewalk", "pavement"]):
+            if text_dept != "BBMP" and "pothole" not in consistent_objs and "road_crack" not in consistent_objs:
+                semantic_conflict_dept = "BBMP"
+        elif any(k in img_cat_lower for k in ["garbage", "solid waste", "waste dump", "trash", "food waste"]):
+            if text_dept != "BSWML" and "garbage" not in consistent_objs:
+                semantic_conflict_dept = "BSWML"
+        elif any(k in img_cat_lower for k in ["water pipeline", "water pipe", "pipeline burst", "sewage overflow", "sewer line", "manhole"]):
+            if text_dept != "BWSSB" and "water_leak" not in consistent_objs:
+                semantic_conflict_dept = "BWSSB"
+        elif any(k in img_cat_lower for k in ["power cut", "power outage", "transformer", "electric pole", "exposed wires"]):
+            if text_dept != "BESCOM" and "damaged_electrical_pole" not in consistent_objs:
+                semantic_conflict_dept = "BESCOM"
+
+    # Flag ONLY if NO detected object supports the text category (or secondary agency)
+    # AND (at least one detected object supports a different department OR semantic status is MISMATCH pointing to another dept)
+    conflict = False
+    img_dept = None
+    reason = None
+
+    if not has_supporting_object:
+        if conflicting_depts:
+            conflict = True
+            for d in ["BBMP", "BSWML", "BWSSB", "BESCOM"]:
+                if d in conflicting_depts:
+                    img_dept = d
+                    break
+        elif semantic_status == "MISMATCH" and semantic_conflict_dept:
+            conflict = True
+            img_dept = semantic_conflict_dept
+
+    if conflict and img_dept:
+        reason = (
+            f"Department mismatch between complaint text ({text_dept}) and "
+            f"image evidence ({img_dept}: {img_cat or ', '.join(sorted(det_lower)) or 'conflicting evidence'}). "
+            f"Retained text department {text_dept} pending manual officer review."
+        )
+
+    return conflict, img_dept, reason
+
 
 router = APIRouter(prefix="/complaints", tags=["Complaints"])
 
@@ -513,6 +677,44 @@ def raise_complaint(
     )
 
     # ── 4. Duplicate Detection (Enhanced with Multimodal Verification) ─────────
+    # Check for cross-department conflict between text routing and image evidence
+    dept_mismatch_reason = None
+    if image_path:
+        vis_objs = evidence_data.get("vision_objects_detected")
+        detected_objs_list = []
+        if isinstance(vis_objs, str):
+            try:
+                detected_objs_list = json.loads(vis_objs)
+            except Exception:
+                detected_objs_list = []
+        elif isinstance(vis_objs, list):
+            detected_objs_list = vis_objs
+
+        det_set = set(str(o).lower() for o in detected_objs_list)
+        text_dept_code = category.department.code if (category and category.department) else "BBMP"
+        text_category_name = category.name if category else predicted_cat_name
+
+        # Resolve secondary department if any
+        sec_dept = None
+        try:
+            sec_routing = classify_complaint_structured(translated_desc)
+            sec_dept = sec_routing.get("secondary_agency")
+        except Exception:
+            sec_dept = None
+
+        has_conflict, conflict_dept, conflict_reason = detect_department_conflict(
+            text_category=text_category_name,
+            text_dept=text_dept_code,
+            secondary_dept=sec_dept,
+            detected_set=det_set,
+            img_cat=evidence_data.get("image_category") or "",
+            semantic_status=evidence_data.get("semantic_match_status") or "MATCH",
+        )
+
+        if has_conflict:
+            evidence_data["verification_decision"] = "MANUAL_REVIEW"
+            dept_mismatch_reason = conflict_reason
+
     assigned_duplicate_id = duplicate_of_id
     duplicate_score = 0.0
     dup_review_flag = None
@@ -610,10 +812,14 @@ def raise_complaint(
         ))
     else:
         init_remarks = "Complaint registered in system."
-        if dup_review_flag == "MANUAL_REVIEW_CONFLICT":
+        if dept_mismatch_reason:
+            init_remarks = f"Complaint registered and flagged for manual review: {dept_mismatch_reason}"
+        elif dup_review_flag == "MANUAL_REVIEW_CONFLICT":
             init_remarks = f"Complaint registered and flagged for manual review: {dup_details.get('reason', 'Image matches existing complaint but location/description differs.')}"
         elif dup_review_flag == "INCONCLUSIVE_REVIEW":
             init_remarks = f"Complaint registered and flagged for manual review: {dup_details.get('reason', 'Borderline similarity with nearby complaint.')}"
+        elif evidence_data.get("verification_decision") == "MANUAL_REVIEW":
+            init_remarks = format_manual_review_remark(evidence_data.get("gate_reasons"))
 
         db.add(ComplaintStatusHistory(
             complaint_id=complaint.id,
